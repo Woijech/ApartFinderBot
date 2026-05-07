@@ -30,6 +30,7 @@ from aiogram.types import (
     Message,
     TelegramObject,
 )
+from sqlalchemy.exc import SQLAlchemyError
 
 from kufarpars.bot_storage import BotStorage, UserProfile
 from kufarpars.client import KufarClient, KufarNetworkError, SearchRequest
@@ -1355,6 +1356,14 @@ async def run_bot() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    try:
+        storage.check_connection()
+    except SQLAlchemyError as error:
+        raise RuntimeError(
+            "PostgreSQL is unavailable. For normal use run the whole stack with "
+            "`docker compose up -d --build`. Use local `kufarpars-bot` only when "
+            "PostgreSQL is reachable from your host on localhost:5432."
+        ) from error
     bot = Bot(
         token=telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),

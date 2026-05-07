@@ -12,6 +12,8 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-kufarpars}
       POSTGRES_USER: ${POSTGRES_USER:-kufarpars}

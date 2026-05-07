@@ -13,9 +13,19 @@ pytest
 
 ## Telegram bot
 
-Create a bot with BotFather, put the token into `.env`, then run:
+Create a bot with BotFather, put the token into `.env`, then run the full
+Docker stack:
 
 ```bash
+docker compose up -d --build
+```
+
+If you intentionally run the bot from the local virtualenv, PostgreSQL must be
+reachable from the host on `localhost:5432`:
+
+```bash
+docker compose up -d postgres
+alembic upgrade head
 kufarpars-bot
 ```
 

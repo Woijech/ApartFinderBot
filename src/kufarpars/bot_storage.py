@@ -10,7 +10,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
@@ -68,6 +68,11 @@ class BotStorage:
     def engine(self) -> Engine:
         """Return the SQLAlchemy engine for Alembic and diagnostics."""
         return self._engine
+
+    def check_connection(self) -> None:
+        """Verify that PostgreSQL is reachable before the bot starts polling."""
+        with self._engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
 
     def get(self, chat_id: int) -> UserProfile:
         """Return an existing profile or create a new default one."""
