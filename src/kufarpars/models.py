@@ -1,4 +1,4 @@
-"""Domain models shared by the Kufar parser, CLI, and Telegram bot.
+"""Domain models shared by the Kufar parser and Telegram bot.
 
 The classes in this module intentionally contain no scraping or Telegram
 knowledge. Keep them small and stable so new parsers can reuse the same output

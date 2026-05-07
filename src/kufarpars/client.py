@@ -73,7 +73,7 @@ class SearchRequest:
 
 
 class KufarClient:
-    """Synchronous Kufar client used by CLI and background bot jobs."""
+    """Synchronous Kufar client used by background bot jobs."""
 
     def __init__(
         self,

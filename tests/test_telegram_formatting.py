@@ -25,3 +25,37 @@ def test_build_listing_presentation_uses_images_and_full_description() -> None:
     assert "Контакт" not in presentation.caption
     assert "Агент" not in presentation.caption
     assert "07.05.2026 23:23" in presentation.caption
+
+
+def test_build_listing_presentation_without_images_uses_message_limit() -> None:
+    listing = Listing(
+        ad_id=2,
+        title="Квартира без фото",
+        url="https://re.kufar.by/vi/2",
+        description="Очень длинное описание. " * 400,
+        price_usd=350,
+    )
+
+    presentation = build_listing_presentation(listing, max_images=0)
+
+    assert presentation.image_urls == []
+    assert presentation.details is None
+    assert len(presentation.caption) <= 4096
+    assert presentation.caption.endswith("...")
+
+
+def test_build_listing_presentation_with_images_uses_caption_limit() -> None:
+    listing = Listing(
+        ad_id=3,
+        title="Комната с фото",
+        url="https://re.kufar.by/vi/3",
+        description="Очень длинное описание. " * 200,
+        images=[ListingImage(gallery_url="https://example.test/3.jpg")],
+        price_usd=200,
+    )
+
+    presentation = build_listing_presentation(listing, max_images=1)
+
+    assert presentation.image_urls == ["https://example.test/3.jpg"]
+    assert len(presentation.caption) <= 1024
+    assert presentation.caption.endswith("...")

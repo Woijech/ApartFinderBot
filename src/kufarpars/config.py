@@ -1,6 +1,6 @@
 """Application configuration loaded from environment and ``.env``.
 
-Every setting used by the parser, CLI, or bot should live here so deployment
+Every setting used by the parser or bot should live here so deployment
 differences stay outside the business logic.
 """
 
@@ -12,11 +12,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _bool_from_env(name: str, default: bool = False) -> bool:
+    """Read a boolean environment flag from common true/false strings."""
+    value = getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings for KufarPars."""
 
-    base_url: str = getenv("KUFARPARS_BASE_URL", "https://www.kufar.by")
     realty_url: str = getenv("KUFARPARS_REALTY_URL", "https://re.kufar.by")
     timeout_seconds: float = float(getenv("KUFARPARS_TIMEOUT_SECONDS", "20"))
     request_retries: int = int(getenv("KUFARPARS_REQUEST_RETRIES", "2"))
@@ -57,6 +64,11 @@ class Settings:
     bot_display_timezone: str = getenv(
         "KUFARPARS_BOT_DISPLAY_TIMEZONE",
         "Europe/Minsk",
+    )
+    bot_enable_preview: bool = _bool_from_env("KUFARPARS_BOT_ENABLE_PREVIEW")
+    bot_preview_image_url: str = getenv(
+        "KUFARPARS_BOT_PREVIEW_IMAGE_URL",
+        "https://placehold.co/1200x800/png?text=Kufar+Preview",
     )
     bot_max_pages: int = int(getenv("KUFARPARS_BOT_MAX_PAGES", "1"))
     bot_page_delay_seconds: float = float(

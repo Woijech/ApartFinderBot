@@ -33,7 +33,7 @@ from aiogram.types import (
 from kufarpars.bot_storage import BotStorage, UserProfile
 from kufarpars.client import KufarClient, KufarNetworkError, SearchRequest
 from kufarpars.config import settings
-from kufarpars.models import Listing
+from kufarpars.models import Listing, ListingImage
 from kufarpars.search_catalog import (
     PRICE_RANGES,
     SEARCH_TARGETS,
@@ -86,6 +86,20 @@ async def show_settings(message: Message) -> None:
         reply_markup=main_menu_keyboard(profile),
         disable_web_page_preview=True,
     )
+
+
+@router.message(Command("preview"))
+async def preview_listing(message: Message, bot: Bot) -> None:
+    """Send a local fake listing so developers can inspect Telegram formatting."""
+    if not settings.bot_enable_preview:
+        await message.answer(
+            "🧪 Preview-режим выключен.\n\n"
+            "Для локального теста добавь в .env:\n"
+            "<code>KUFARPARS_BOT_ENABLE_PREVIEW=true</code>"
+        )
+        return
+    await message.answer("🧪 Отправляю пример уведомления без запроса к Kufar.")
+    await send_listing(bot, message.chat.id, build_preview_listing())
 
 
 @router.callback_query(F.data == CALLBACK_MAIN)
@@ -388,6 +402,29 @@ def bot_kufar_client() -> KufarClient:
         timeout_seconds=settings.bot_fetch_timeout_seconds,
         retries=settings.bot_fetch_retries,
         retry_delay_seconds=settings.bot_fetch_retry_delay_seconds,
+    )
+
+
+def build_preview_listing() -> Listing:
+    """Build a stable fake listing for Telegram preview mode."""
+    return Listing(
+        ad_id=0,
+        title="Сдам комнату рядом с метро",
+        url="https://re.kufar.by/vi/preview",
+        price_usd=180,
+        address="Притыцкого ул, 77, Минск",
+        rooms="1",
+        area_m2=17,
+        floor="5",
+        total_floors="9",
+        metro=["Каменная Горка"],
+        description=(
+            "Светлая комната в аккуратной квартире. Есть кровать, рабочий стол, "
+            "шкаф, стиральная машина и быстрый интернет. До метро несколько "
+            "минут пешком. Это тестовое уведомление, оно не приходит с Kufar."
+        ),
+        published_at=datetime(2026, 5, 7, 20, 23, tzinfo=UTC),
+        images=[ListingImage(gallery_url=settings.bot_preview_image_url)],
     )
 
 

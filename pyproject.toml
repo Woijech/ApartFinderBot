@@ -22,7 +22,6 @@ dev = [
 ]
 
 [project.scripts]
-kufarpars = "kufarpars.cli:main"
 kufarpars-bot = "kufarpars.telegram_bot:main"
 
 [tool.setuptools.packages.find]

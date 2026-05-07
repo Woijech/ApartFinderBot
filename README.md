@@ -1,6 +1,6 @@
 # KufarPars
 
-Python project scaffold for parsing and processing Kufar listings.
+Telegram bot for monitoring new Kufar real-estate listings.
 
 ## Quick start
 
@@ -9,27 +9,6 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 pytest
-```
-
-## Run
-
-```bash
-kufarpars --help
-```
-
-Search apartments:
-
-```bash
-kufarpars search --rooms 1 --max-price 500 --pages 1
-kufarpars search --rooms 2 --text "возле метро" --format json
-kufarpars search --type room --city minsk --max-price 250
-kufarpars search --deal buy --city minsk --sort cheap --format csv
-```
-
-Raw Kufar filter parameters can be passed with `--param KEY=VALUE`, for example:
-
-```bash
-kufarpars search --param mee=v.or:6 --param fli=v.or:6
 ```
 
 ## Telegram bot
@@ -53,6 +32,13 @@ Current bot filters:
 - fixed search area: rent in Minsk
 - notifications include gallery photos when Kufar provides them
 - full descriptions are loaded from listing detail pages before sending
+
+For local UI testing without waiting for a new Kufar listing, enable preview
+mode in `.env`, restart the bot, and send `/preview` in Telegram:
+
+```env
+KUFARPARS_BOT_ENABLE_PREVIEW=true
+```
 
 After `/start`, use the buttons:
 
@@ -91,6 +77,8 @@ KUFARPARS_BOT_FETCH_TIMEOUT_SECONDS=8
 KUFARPARS_BOT_FETCH_RETRIES=1
 KUFARPARS_BOT_FETCH_RETRY_DELAY_SECONDS=1
 KUFARPARS_BOT_DISPLAY_TIMEZONE=Europe/Minsk
+KUFARPARS_BOT_ENABLE_PREVIEW=false
+KUFARPARS_BOT_PREVIEW_IMAGE_URL=https://placehold.co/1200x800/png?text=Kufar+Preview
 ```
 
 Tables:
