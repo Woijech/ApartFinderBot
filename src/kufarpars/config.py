@@ -1,3 +1,9 @@
+"""Application configuration loaded from environment and ``.env``.
+
+Every setting used by the parser, CLI, or bot should live here so deployment
+differences stay outside the business logic.
+"""
+
 from dataclasses import dataclass
 from os import getenv
 
@@ -8,6 +14,8 @@ load_dotenv()
 
 @dataclass(frozen=True)
 class Settings:
+    """Runtime settings for KufarPars."""
+
     base_url: str = getenv("KUFARPARS_BASE_URL", "https://www.kufar.by")
     realty_url: str = getenv("KUFARPARS_REALTY_URL", "https://re.kufar.by")
     timeout_seconds: float = float(getenv("KUFARPARS_TIMEOUT_SECONDS", "20"))
@@ -27,6 +35,7 @@ class Settings:
     bot_page_delay_seconds: float = float(
         getenv("KUFARPARS_BOT_PAGE_DELAY_SECONDS", "1")
     )
+    bot_max_images: int = int(getenv("KUFARPARS_BOT_MAX_IMAGES", "3"))
 
 
 settings = Settings()

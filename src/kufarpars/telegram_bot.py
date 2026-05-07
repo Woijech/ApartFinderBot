@@ -1,8 +1,16 @@
+"""Aiogram bot entry point and interaction handlers.
+
+The bot keeps user interaction intentionally thin: it renders buttons, stores
+profile choices, fetches listings, enriches only the listings that will be sent,
+and delegates display formatting to ``telegram_formatting``. Add new searchable
+targets in ``search_catalog`` and new presentation rules in
+``telegram_formatting``.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from html import escape
 from sys import exit
 
@@ -14,6 +22,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
     Message,
 )
 
@@ -21,6 +30,18 @@ from kufarpars.bot_storage import BotStorage, UserProfile
 from kufarpars.client import KufarClient, SearchRequest
 from kufarpars.config import settings
 from kufarpars.models import Listing
+from kufarpars.search_catalog import (
+    PRICE_RANGES,
+    SEARCH_TARGETS,
+    default_request,
+    price_range_by_code,
+    target_by_code,
+    target_for_request,
+)
+from kufarpars.telegram_formatting import (
+    ListingPresentation,
+    build_listing_presentation,
+)
 
 router = Router()
 storage = BotStorage(settings.bot_state_path)
@@ -35,30 +56,9 @@ CALLBACK_WATCH_OFF = "action:watch_off"
 CALLBACK_SETTINGS = "action:settings"
 
 
-@dataclass(frozen=True)
-class PriceRange:
-    """Describes one price preset shown as an inline keyboard button."""
-
-    code: str
-    title: str
-    min_price: int | None
-    max_price: int | None
-
-
-PRICE_RANGES = [
-    PriceRange("any", "Любая цена", None, None),
-    PriceRange("0_150", "до 150 $", 0, 150),
-    PriceRange("150_250", "150-250 $", 150, 250),
-    PriceRange("250_350", "250-350 $", 250, 350),
-    PriceRange("350_500", "350-500 $", 350, 500),
-    PriceRange("500_800", "500-800 $", 500, 800),
-    PriceRange("800_1200", "800-1200 $", 800, 1200),
-]
-
-
 @router.message(Command("start", "menu"))
 async def start(message: Message) -> None:
-    """Open the main bot menu and create a default user profile if needed."""
+    """Open the main menu and create a default profile if needed."""
     profile = ensure_default_profile(message.chat.id)
     await message.answer(
         main_menu_text(profile),
@@ -69,7 +69,7 @@ async def start(message: Message) -> None:
 
 @router.message(Command("settings"))
 async def show_settings(message: Message) -> None:
-    """Show current search settings for users who prefer a direct command."""
+    """Show current settings for users who prefer a command."""
     profile = ensure_default_profile(message.chat.id)
     await message.answer(
         settings_text(profile),
@@ -80,7 +80,7 @@ async def show_settings(message: Message) -> None:
 
 @router.callback_query(F.data == CALLBACK_MAIN)
 async def main_menu(callback: CallbackQuery) -> None:
-    """Render the main menu after a user presses the back/home button."""
+    """Render the main menu after a user presses back/home."""
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.message.edit_text(
         main_menu_text(profile),
@@ -92,7 +92,7 @@ async def main_menu(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == CALLBACK_FILTERS)
 async def filters_menu(callback: CallbackQuery) -> None:
-    """Render the compact filter menu with only supported user-facing filters."""
+    """Render the supported filter menu."""
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.message.edit_text(
         filters_menu_text(profile),
@@ -104,7 +104,7 @@ async def filters_menu(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == CALLBACK_TYPE)
 async def property_type_menu(callback: CallbackQuery) -> None:
-    """Render apartment/room selection buttons."""
+    """Render buttons for selecting a search target."""
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.message.edit_text(
         "Выбери тип жилья:",
@@ -115,10 +115,11 @@ async def property_type_menu(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("set:type:"))
 async def set_property_type(callback: CallbackQuery) -> None:
-    """Persist the selected property type and reset seen listings."""
-    property_type = callback.data.rsplit(":", maxsplit=1)[-1]
+    """Persist the selected search target and reset seen listing ids."""
+    target_code = callback.data.rsplit(":", maxsplit=1)[-1]
+    target = target_by_code(target_code)
     profile = ensure_default_profile(callback.message.chat.id)
-    profile.request = replace_request(profile.request, property_type=property_type)
+    profile.request = replace_request(profile.request, **target.request_patch)
     profile.seen_ids = []
     storage.update(profile)
     await callback.message.edit_text(
@@ -131,7 +132,7 @@ async def set_property_type(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == CALLBACK_PRICE)
 async def price_menu(callback: CallbackQuery) -> None:
-    """Render price range presets."""
+    """Render price-range preset buttons."""
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.message.edit_text(
         "Выбери диапазон цены:",
@@ -142,7 +143,7 @@ async def price_menu(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("set:price:"))
 async def set_price(callback: CallbackQuery) -> None:
-    """Persist the selected price range and reset seen listings."""
+    """Persist the selected price range and reset seen listing ids."""
     code = callback.data.rsplit(":", maxsplit=1)[-1]
     price_range = price_range_by_code(code)
     profile = ensure_default_profile(callback.message.chat.id)
@@ -175,7 +176,7 @@ async def settings_callback(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == CALLBACK_RUN_ONCE)
 async def run_once_callback(callback: CallbackQuery) -> None:
-    """Fetch current listings once and send several matching examples."""
+    """Fetch current listings once and send several enriched examples."""
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.answer("Проверяю Kufar...")
     await callback.message.answer("Проверяю Kufar по выбранным фильтрам...")
@@ -186,13 +187,12 @@ async def run_once_callback(callback: CallbackQuery) -> None:
             reply_markup=main_menu_keyboard(profile),
         )
         return
-    for listing in listings[:5]:
-        await callback.message.answer(
-            format_listing(listing),
-            disable_web_page_preview=True,
-        )
+
+    limit = min(len(listings), 5)
+    for listing in await fetch_listing_details(listings[:limit]):
+        await answer_listing(callback.message, listing)
     await callback.message.answer(
-        f"Показал первые {min(len(listings), 5)} из {len(listings)}.",
+        f"Показал первые {limit} из {len(listings)}.",
         reply_markup=main_menu_keyboard(profile),
     )
 
@@ -250,21 +250,18 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
         storage.update(profile)
         return
 
-    for listing in reversed(new_listings):
-        await bot.send_message(
-            profile.chat_id,
-            format_listing(listing),
-            disable_web_page_preview=True,
-        )
+    enriched = await fetch_listing_details(list(reversed(new_listings)))
+    for listing in enriched:
+        await send_listing(bot, profile.chat_id, listing)
     profile.seen_ids = merge_seen(profile.seen_ids, listings)
     storage.update(profile)
 
 
 async def fetch_listings(profile: UserProfile) -> list[Listing]:
-    """Fetch matching listings in a worker thread so aiogram stays responsive."""
+    """Fetch matching search-page listings without loading detail pages."""
 
     def fetch() -> list[Listing]:
-        """Run the synchronous Kufar client for one profile."""
+        """Run the synchronous Kufar search client for one profile."""
         with KufarClient() as client:
             return list(
                 client.search_pages(
@@ -277,15 +274,107 @@ async def fetch_listings(profile: UserProfile) -> list[Listing]:
     return await asyncio.to_thread(fetch)
 
 
+async def fetch_listing_details(listings: list[Listing]) -> list[Listing]:
+    """Load full descriptions and gallery URLs only for listings being sent."""
+
+    def fetch() -> list[Listing]:
+        """Fetch detail pages with one HTTP client for connection reuse."""
+        enriched = []
+        with KufarClient() as client:
+            for listing in listings:
+                try:
+                    enriched.append(client.fetch_listing_detail(listing))
+                except Exception:
+                    logging.exception("Failed to enrich listing %s", listing.ad_id)
+                    enriched.append(listing)
+        return enriched
+
+    return await asyncio.to_thread(fetch)
+
+
+async def answer_listing(message: Message, listing: Listing) -> None:
+    """Send one listing as a reply to an existing message."""
+    presentation = build_listing_presentation(
+        listing,
+        max_images=settings.bot_max_images,
+    )
+    if presentation.image_urls:
+        if len(presentation.image_urls) == 1:
+            await message.answer_photo(
+                presentation.image_urls[0],
+                caption=presentation.caption,
+            )
+            if presentation.details:
+                await message.answer(
+                    presentation.details,
+                    disable_web_page_preview=True,
+                )
+            return
+        await message.answer_media_group(media_group_from_presentation(presentation))
+        if presentation.details:
+            await message.answer(presentation.details, disable_web_page_preview=True)
+        return
+    await message.answer(presentation.caption, disable_web_page_preview=True)
+
+
+async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
+    """Send one listing from the background notifier."""
+    presentation = build_listing_presentation(
+        listing,
+        max_images=settings.bot_max_images,
+    )
+    if presentation.image_urls:
+        if len(presentation.image_urls) == 1:
+            await bot.send_photo(
+                chat_id,
+                presentation.image_urls[0],
+                caption=presentation.caption,
+            )
+            if presentation.details:
+                await bot.send_message(
+                    chat_id,
+                    presentation.details,
+                    disable_web_page_preview=True,
+                )
+            return
+        await bot.send_media_group(chat_id, media_group_from_presentation(presentation))
+        if presentation.details:
+            await bot.send_message(
+                chat_id,
+                presentation.details,
+                disable_web_page_preview=True,
+            )
+        return
+    await bot.send_message(
+        chat_id,
+        presentation.caption,
+        disable_web_page_preview=True,
+    )
+
+
+def media_group_from_presentation(
+    presentation: ListingPresentation,
+) -> list[InputMediaPhoto]:
+    """Build a Telegram album with a caption only on the first photo."""
+    return [
+        InputMediaPhoto(
+            media=url,
+            caption=presentation.caption if index == 0 else None,
+        )
+        for index, url in enumerate(presentation.image_urls)
+    ]
+
+
 def ensure_default_profile(chat_id: int) -> UserProfile:
     """Return a profile configured for Minsk rental search by default."""
     profile = storage.get(chat_id)
+    defaults = default_request()
     profile.request = replace_request(
         profile.request,
-        city="minsk",
-        deal="rent",
-        currency="USD",
-        sort="newest",
+        city=defaults.city,
+        deal=defaults.deal,
+        currency=defaults.currency,
+        sort=defaults.sort,
         text=None,
         extra_params={},
     )
@@ -317,14 +406,6 @@ def merge_seen(seen_ids: list[int], listings: list[Listing]) -> list[int]:
     merged = [listing.ad_id for listing in listings]
     merged.extend(item for item in seen_ids if item not in merged)
     return merged[:1000]
-
-
-def price_range_by_code(code: str) -> PriceRange:
-    """Find a configured price range by callback code."""
-    for price_range in PRICE_RANGES:
-        if price_range.code == code:
-            return price_range
-    raise ValueError(f"Unknown price range: {code}")
 
 
 def main_menu_keyboard(profile: UserProfile) -> InlineKeyboardMarkup:
@@ -372,25 +453,20 @@ def filters_keyboard() -> InlineKeyboardMarkup:
 
 
 def property_type_keyboard(profile: UserProfile) -> InlineKeyboardMarkup:
-    """Build buttons for choosing apartment or room search."""
-    current = profile.request.property_type
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    """Build buttons for choosing the active search target."""
+    current = target_for_request(profile.request).code
+    rows = []
+    for target in SEARCH_TARGETS:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=selected_label("Квартира", current == "apartment"),
-                    callback_data="set:type:apartment",
+                    text=selected_label(target.title, current == target.code),
+                    callback_data=f"set:type:{target.code}",
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=selected_label("Комната", current == "room"),
-                    callback_data="set:type:room",
-                )
-            ],
-            [InlineKeyboardButton(text="Назад", callback_data=CALLBACK_FILTERS)],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="Назад", callback_data=CALLBACK_FILTERS)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def price_keyboard(profile: UserProfile) -> InlineKeyboardMarkup:
@@ -442,22 +518,20 @@ def filters_menu_text(profile: UserProfile) -> str:
 def settings_text(profile: UserProfile) -> str:
     """Format the current profile settings for display in Telegram."""
     request = profile.request
-    params = "&".join(
-        f"{key}={value}" for key, value in request.params().items()
-    )
+    params = "&".join(f"{key}={value}" for key, value in request.params().items())
     return (
         f"Статус: {'включено' if profile.enabled else 'выключено'}\n"
         "Город: Минск\n"
         "Сделка: аренда\n"
-        f"Тип жилья: {property_type_title(request.property_type)}\n"
+        f"Тип жилья: {property_type_title(request)}\n"
         f"Цена: {price_title(request)}\n"
         f"URL: <code>{escape(request.path())}?{escape(params)}</code>"
     )
 
 
-def property_type_title(property_type: str) -> str:
-    """Convert internal property type code into Russian UI text."""
-    return "комната" if property_type == "room" else "квартира"
+def property_type_title(request: SearchRequest) -> str:
+    """Convert the current request target into Russian UI text."""
+    return target_for_request(request).title.lower()
 
 
 def price_title(request: SearchRequest) -> str:
@@ -467,37 +541,6 @@ def price_title(request: SearchRequest) -> str:
     min_price = request.min_price if request.min_price is not None else 0
     max_price = request.max_price if request.max_price is not None else "без лимита"
     return f"{min_price}-{max_price} {request.currency}"
-
-
-def format_listing(listing: Listing) -> str:
-    """Format one Kufar listing as a compact Telegram notification."""
-    parts = [
-        f"<b>{escape(listing.price_label)}</b> — {escape(listing.title)}",
-    ]
-    specs = listing_specs(listing)
-    if specs:
-        parts.append(escape(specs))
-    if listing.short_location:
-        parts.append(escape(listing.short_location))
-    if listing.description:
-        parts.append(escape(listing.description[:350].strip()))
-    parts.append(escape(listing.url))
-    return "\n".join(parts)
-
-
-def listing_specs(listing: Listing) -> str:
-    """Build a short room/area/floor summary for one listing."""
-    parts = []
-    if listing.rooms:
-        parts.append(f"{listing.rooms} комн.")
-    if listing.area_m2:
-        parts.append(f"{listing.area_m2:g} м2")
-    if listing.floor:
-        floor = f"этаж {listing.floor}"
-        if listing.total_floors:
-            floor = f"{floor} из {listing.total_floors}"
-        parts.append(floor)
-    return ", ".join(parts)
 
 
 @router.errors()

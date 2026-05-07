@@ -51,6 +51,8 @@ Current bot filters:
 - property type: apartment or room
 - price range: preset ranges in USD
 - fixed search area: rent in Minsk
+- notifications include gallery photos when Kufar provides them
+- full descriptions are loaded from listing detail pages before sending
 
 After `/start`, use the buttons:
 
@@ -60,6 +62,21 @@ After `/start`, use the buttons:
 - `Проверить сейчас`
 - `Включить слежение`
 - `Выключить слежение`
+- `Мои фильтры`
+
+## Project structure
+
+- `models.py` contains parser-independent domain objects.
+- `client.py` owns HTTP access, pagination, and detail-page enrichment.
+- `parser.py` extracts search and detail data from Kufar Next.js payloads.
+- `search_catalog.py` lists bot-visible search targets and filter presets.
+- `telegram_formatting.py` builds Telegram-safe listing cards and captions.
+- `telegram_bot.py` contains aiogram handlers and background monitoring.
+- `bot_storage.py` stores chat settings and seen listing ids.
+
+To add a new parser target, start with `search_catalog.py`, then teach
+`client.py`/`parser.py` how to build and parse that target if its data shape
+differs from real estate listings.
 
 ## Configuration
 

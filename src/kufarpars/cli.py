@@ -1,3 +1,9 @@
+"""Command-line interface for manual Kufar searches.
+
+The CLI is mainly a development and debugging surface for the parser. The
+Telegram bot uses the same ``KufarClient`` and ``SearchRequest`` underneath.
+"""
+
 import csv
 import json
 from argparse import ArgumentParser
@@ -11,6 +17,7 @@ from kufarpars.models import Listing
 
 
 def build_parser() -> ArgumentParser:
+    """Build the top-level argparse parser."""
     parser = ArgumentParser(prog="kufarpars")
     parser.add_argument(
         "--version",
@@ -84,6 +91,7 @@ def build_parser() -> ArgumentParser:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     parser = build_parser()
     args = parser.parse_args()
     if args.command == "search":
@@ -114,6 +122,7 @@ def main() -> None:
 
 
 def _parse_extra_params(values: list[str]) -> dict[str, str]:
+    """Parse raw ``KEY=VALUE`` query parameters from CLI flags."""
     result: dict[str, str] = {}
     for value in values:
         key, separator, raw = value.partition("=")
@@ -124,6 +133,7 @@ def _parse_extra_params(values: list[str]) -> dict[str, str]:
 
 
 def _print_listings(listings: list[Listing], output_format: str) -> None:
+    """Print listings in the requested output format."""
     if output_format == "json":
         data = [_listing_dict(item) for item in listings]
         print(json.dumps(data, ensure_ascii=False))
@@ -135,6 +145,7 @@ def _print_listings(listings: list[Listing], output_format: str) -> None:
 
 
 def _listing_dict(listing: Listing) -> dict[str, object]:
+    """Convert a Listing dataclass into a JSON-friendly dictionary."""
     data = asdict(listing)
     data["published_at"] = (
         listing.published_at.isoformat() if listing.published_at else None
@@ -144,6 +155,7 @@ def _listing_dict(listing: Listing) -> dict[str, object]:
 
 
 def _write_csv(listings: list[Listing]) -> None:
+    """Write listings to stdout as CSV."""
     fieldnames = [
         "ad_id",
         "title",
@@ -166,6 +178,7 @@ def _write_csv(listings: list[Listing]) -> None:
 
 
 def _write_table(listings: list[Listing]) -> None:
+    """Write listings to stdout as a readable text table."""
     if not listings:
         print("Ничего не найдено.")
         return
@@ -183,6 +196,7 @@ def _write_table(listings: list[Listing]) -> None:
 
 
 def _listing_specs(listing: Listing) -> str:
+    """Build a short room/area/floor summary for CLI output."""
     parts = []
     if listing.rooms:
         parts.append(f"{listing.rooms} комн.")

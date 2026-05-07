@@ -1,15 +1,22 @@
+"""HTTP client and search request builder for Kufar.
+
+The rest of the project should go through this module for network access. That
+keeps throttling, headers, pagination, detail-page enrichment, and future parser
+targets in one place.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from time import sleep
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
 from kufarpars.config import settings
 from kufarpars.models import Listing
-from kufarpars.parser import parse_search_page
+from kufarpars.parser import parse_detail_page, parse_search_page
 
 ROOM_PATHS = {1: "1k", 2: "2k", 3: "3k", 4: "4k"}
 DEAL_PATHS = {"rent": "snyat", "buy": "kupit"}
@@ -19,6 +26,8 @@ SORT_VALUES = {"newest": None, "cheap": "prc.a", "expensive": "prc.d"}
 
 @dataclass(frozen=True)
 class SearchRequest:
+    """A high-level search request that can be converted into a Kufar URL."""
+
     city: str = "minsk"
     deal: str = "rent"
     property_type: str = "apartment"
@@ -32,6 +41,7 @@ class SearchRequest:
     extra_params: dict[str, str] = field(default_factory=dict)
 
     def path(self) -> str:
+        """Build the friendly Kufar path for the configured search target."""
         deal_path = DEAL_PATHS[self.deal]
         property_path = PROPERTY_PATHS[self.property_type]
         parts = ["l", self.city, deal_path, property_path]
@@ -40,6 +50,7 @@ class SearchRequest:
         return "/" + "/".join(parts)
 
     def params(self) -> dict[str, str]:
+        """Build query parameters for the configured filters."""
         params = {
             "cur": self.currency,
             "size": str(self.size),
@@ -58,6 +69,8 @@ class SearchRequest:
 
 
 class KufarClient:
+    """Synchronous Kufar client used by CLI and background bot jobs."""
+
     def __init__(
         self,
         base_url: str = settings.realty_url,
@@ -75,12 +88,15 @@ class KufarClient:
         )
 
     def close(self) -> None:
+        """Close the underlying HTTP connection pool."""
         self._client.close()
 
     def __enter__(self) -> KufarClient:
+        """Enter a context-managed client session."""
         return self
 
     def __exit__(self, *_args: object) -> None:
+        """Close the client session when leaving a context manager."""
         self.close()
 
     def search_pages(
@@ -89,6 +105,7 @@ class KufarClient:
         max_pages: int = 1,
         delay_seconds: float = 1.0,
     ) -> Iterable[Listing]:
+        """Yield listings from one or more Kufar search pages."""
         params = request.params()
         cursor: str | None = None
 
@@ -104,14 +121,32 @@ class KufarClient:
                 sleep(delay_seconds)
 
     def search_page(self, path: str, params: dict[str, str]):
+        """Fetch and parse one Kufar search page."""
         return parse_search_page(self.fetch_html(path, params))
 
+    def fetch_listing_detail(self, listing: Listing) -> Listing:
+        """Fetch a listing detail page to get full description and gallery URLs."""
+        return parse_detail_page(self.fetch_url(listing.url))
+
     def fetch_html(self, path: str, params: dict[str, str]) -> str:
+        """Fetch a Kufar path with query parameters and return response text."""
         url = self._url(path, params)
+        return self.fetch_url(url)
+
+    def fetch_url(self, url: str) -> str:
+        """Fetch an absolute or site-relative URL and return response text."""
+        if url.startswith("/"):
+            url = f"{self._base_url}{url}"
         response = self._client.get(url)
         response.raise_for_status()
         return response.text
 
     def _url(self, path: str, params: dict[str, str]) -> str:
+        """Build an absolute URL for a Kufar path and query dictionary."""
         query = urlencode(params)
         return f"{self._base_url}{path}?{query}"
+
+    @staticmethod
+    def path_from_url(url: str) -> str:
+        """Return only the path part from an absolute Kufar URL."""
+        return urlparse(url).path

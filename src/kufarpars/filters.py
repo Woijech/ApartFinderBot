@@ -1,3 +1,10 @@
+"""Parser for Kufar filter metadata.
+
+The Telegram bot currently exposes only a curated subset of filters, but this
+module can inspect Kufar pages and list all raw parameters for future UI
+extensions.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,12 +15,16 @@ from kufarpars.parser import extract_next_data
 
 @dataclass(frozen=True)
 class FilterOption:
+    """One selectable value for a Kufar filter."""
+
     value: str
     label: str
 
 
 @dataclass(frozen=True)
 class KufarFilter:
+    """Normalized metadata for one Kufar filter parameter."""
+
     code: str
     name: str
     value_type: str
@@ -23,6 +34,7 @@ class KufarFilter:
 
 
 def parse_filter_catalog(html: str) -> list[KufarFilter]:
+    """Parse all filters embedded in a Kufar search page."""
     data = extract_next_data(html)
     filters = data["props"]["initialState"]["filters"].get("currentFilters") or []
     catalog: list[KufarFilter] = []
@@ -47,6 +59,7 @@ def parse_filter_catalog(html: str) -> list[KufarFilter]:
 
 
 def find_filter(catalog: list[KufarFilter], code: str) -> KufarFilter | None:
+    """Find a filter by Kufar parameter code."""
     for item in catalog:
         if item.code == code:
             return item
@@ -54,12 +67,14 @@ def find_filter(catalog: list[KufarFilter], code: str) -> KufarFilter | None:
 
 
 def _label(item: dict[str, Any]) -> str:
+    """Return the Russian label for a raw Kufar filter item."""
     labels = item.get("labels") or {}
     name = labels.get("name") or {}
     return name.get("ru") or item.get("name") or item.get("url_name") or ""
 
 
 def _options(values: Any) -> list[FilterOption]:
+    """Normalize raw Kufar value options."""
     if not isinstance(values, list):
         return []
     result = []
