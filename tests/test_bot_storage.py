@@ -31,3 +31,26 @@ def test_bot_storage_resets_seen_ids(tmp_path) -> None:
     storage.reset_seen(123)
 
     assert storage.recent_seen_ids(123) == []
+
+
+def test_bot_storage_supports_multiple_subscriptions(tmp_path) -> None:
+    storage = BotStorage(str(tmp_path / "bot.sqlite3"))
+    first = storage.create_subscription(
+        123,
+        "Комната",
+        SearchRequest(property_type="room", max_price=250),
+    )
+    second = storage.create_subscription(
+        123,
+        "Квартира",
+        SearchRequest(property_type="apartment", max_price=500),
+    )
+
+    storage.mark_seen_for_subscription(first.id, [1, 2])
+    storage.mark_seen_for_subscription(second.id, [2, 3])
+
+    subscriptions = storage.list_subscriptions(123)
+
+    assert [item.title for item in subscriptions] == ["Комната", "Квартира"]
+    assert storage.unseen_ids_for_subscription(first.id, [1, 3]) == [3]
+    assert storage.unseen_ids_for_subscription(second.id, [1, 3]) == [1]

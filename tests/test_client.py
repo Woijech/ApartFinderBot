@@ -13,3 +13,19 @@ def test_search_request_builds_room_url_parts() -> None:
     request = SearchRequest(property_type="room", rooms=2)
 
     assert request.path() == "/l/minsk/snyat/komnatu"
+
+
+def test_search_request_keeps_local_only_filters_out_of_kufar_params() -> None:
+    request = SearchRequest(
+        district="Центральный",
+        metro="Немига",
+        include_keywords=["без хозяев"],
+        exclude_keywords=["койко-место"],
+    )
+
+    params = request.params()
+
+    assert "district" not in params
+    assert "metro" not in params
+    assert "include_keywords" not in params
+    assert "exclude_keywords" not in params

@@ -40,6 +40,10 @@ class SearchRequest:
     max_price: int | None = None
     currency: str = "USD"
     text: str | None = None
+    district: str | None = None
+    metro: str | None = None
+    include_keywords: list[str] = field(default_factory=list)
+    exclude_keywords: list[str] = field(default_factory=list)
     sort: str = "newest"
     size: int = 30
     extra_params: dict[str, str] = field(default_factory=dict)

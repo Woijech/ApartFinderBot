@@ -1,8 +1,15 @@
 from datetime import UTC, datetime
 
 from kufarpars.bot_storage import UserProfile
+from kufarpars.client import SearchRequest
 from kufarpars.models import Listing
-from kufarpars.telegram_bot import build_preview_listing, listings_after_watch_start
+from kufarpars.telegram_bot import (
+    build_preview_listing,
+    listing_matches_search_filters,
+    listings_after_watch_start,
+    parse_keywords,
+    parse_price_range_text,
+)
 
 
 def test_listings_after_watch_start_keeps_only_newer_items() -> None:
@@ -67,3 +74,40 @@ def test_build_preview_listing_has_stable_display_data() -> None:
     assert listing.description
     assert listing.images
     assert "preview" in listing.url
+
+
+def test_listing_matches_search_filters_uses_keywords_and_exclusions() -> None:
+    listing = Listing(
+        ad_id=1,
+        title="Сдам комнату без хозяев",
+        url="https://example.test/1",
+        address="Центральный район",
+        metro=["Немига"],
+        description="Можно на длительный срок.",
+    )
+    request = SearchRequest(
+        district="Центральный",
+        metro="Немига",
+        include_keywords=["без хозяев"],
+        exclude_keywords=["койко-место"],
+    )
+
+    assert listing_matches_search_filters(listing, request) is True
+
+    blocked = SearchRequest(exclude_keywords=["длительный срок"])
+
+    assert listing_matches_search_filters(listing, blocked) is False
+
+
+def test_parse_keywords_accepts_commas_and_lines() -> None:
+    assert parse_keywords("без хозяев, метро\nдлительно") == [
+        "без хозяев",
+        "метро",
+        "длительно",
+    ]
+
+
+def test_parse_price_range_text_accepts_common_forms() -> None:
+    assert parse_price_range_text("150-250") == (150, 250)
+    assert parse_price_range_text("до 300") == (None, 300)
+    assert parse_price_range_text("500") == (None, 500)

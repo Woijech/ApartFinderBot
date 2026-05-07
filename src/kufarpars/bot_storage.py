@@ -24,14 +24,19 @@ DEFAULT_SUBSCRIPTION_TITLE = "Основной поиск"
 
 
 @dataclass
-class UserProfile:
-    """A Telegram chat profile with search settings and recent seen listing ids."""
+class SearchSubscription:
+    """A saved Kufar search with monitoring settings and recent seen listing ids."""
 
     chat_id: int
+    id: int | None = None
+    title: str = DEFAULT_SUBSCRIPTION_TITLE
     enabled: bool = False
     watch_started_at: datetime | None = None
     request: SearchRequest = field(default_factory=SearchRequest)
     seen_ids: list[int] = field(default_factory=list)
+
+
+UserProfile = SearchSubscription
 
 
 class BotStorage:
@@ -75,6 +80,79 @@ class BotStorage:
             subscription = self._default_subscription(session, chat_id)
             session.commit()
             return self._profile_from_subscription(session, subscription)
+
+    def list_subscriptions(self, chat_id: int) -> list[SearchSubscription]:
+        """Return all saved searches for one chat."""
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            subscriptions = session.scalars(
+                select(SubscriptionRow)
+                .where(SubscriptionRow.chat_id == chat_id)
+                .order_by(SubscriptionRow.id.asc())
+            ).all()
+            if not subscriptions:
+                subscriptions = [self._default_subscription(session, chat_id)]
+                session.commit()
+            return [
+                self._profile_from_subscription(session, subscription)
+                for subscription in subscriptions
+            ]
+
+    def create_subscription(
+        self,
+        chat_id: int,
+        title: str,
+        request: SearchRequest | None = None,
+    ) -> SearchSubscription:
+        """Create a saved search for one chat."""
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            subscription = SubscriptionRow(
+                chat_id=chat_id,
+                title=title,
+                enabled=False,
+                request_json=_request_to_json(request or SearchRequest()),
+            )
+            session.add(subscription)
+            session.commit()
+            return self._profile_from_subscription(session, subscription)
+
+    def get_subscription(
+        self,
+        chat_id: int,
+        subscription_id: int,
+    ) -> SearchSubscription:
+        """Return one saved search owned by one chat."""
+        with self._session_factory() as session:
+            subscription = self._subscription_by_id(session, chat_id, subscription_id)
+            return self._profile_from_subscription(session, subscription)
+
+    def update_subscription(self, subscription: SearchSubscription) -> None:
+        """Persist one saved search."""
+        if subscription.id is None:
+            self.update(subscription)
+            return
+        with self._session_factory() as session:
+            row = self._subscription_by_id(
+                session,
+                subscription.chat_id,
+                subscription.id,
+            )
+            row.title = subscription.title
+            row.enabled = subscription.enabled
+            row.watch_started_at = _datetime_to_db(subscription.watch_started_at)
+            row.request_json = _request_to_json(subscription.request)
+            row.updated_at = datetime.now(UTC)
+            if subscription.seen_ids:
+                self._mark_seen_for_subscription(session, row.id, subscription.seen_ids)
+            session.commit()
+
+    def delete_subscription(self, chat_id: int, subscription_id: int) -> None:
+        """Delete one saved search and its seen-ad rows."""
+        with self._session_factory() as session:
+            row = self._subscription_by_id(session, chat_id, subscription_id)
+            session.delete(row)
+            session.commit()
 
     def update(self, profile: UserProfile) -> None:
         """Upsert profile settings and optionally persist provided seen ids."""
@@ -127,6 +205,19 @@ class BotStorage:
             self._prune_seen_for_subscription(session, subscription.id)
             session.commit()
 
+    def mark_seen_for_subscription(
+        self,
+        subscription_id: int,
+        ad_ids: list[int],
+    ) -> None:
+        """Insert seen listing ids for one saved search."""
+        if not ad_ids:
+            return
+        with self._session_factory() as session:
+            self._mark_seen_for_subscription(session, subscription_id, ad_ids)
+            self._prune_seen_for_subscription(session, subscription_id)
+            session.commit()
+
     def unseen_ids(self, chat_id: int, ad_ids: list[int]) -> list[int]:
         """Return ids from ``ad_ids`` that have not been seen for this chat."""
         if not ad_ids:
@@ -144,12 +235,40 @@ class BotStorage:
             )
             return [ad_id for ad_id in ad_ids if ad_id not in seen_ids]
 
+    def unseen_ids_for_subscription(
+        self,
+        subscription_id: int,
+        ad_ids: list[int],
+    ) -> list[int]:
+        """Return ids from ``ad_ids`` that have not been seen by one saved search."""
+        if not ad_ids:
+            return []
+        unique_ids = list(dict.fromkeys(int(ad_id) for ad_id in ad_ids))
+        with self._session_factory() as session:
+            seen_ids = set(
+                session.scalars(
+                    select(SeenAdRow.ad_id).where(
+                        SeenAdRow.subscription_id == subscription_id,
+                        SeenAdRow.ad_id.in_(unique_ids),
+                    )
+                ).all()
+            )
+            return [ad_id for ad_id in ad_ids if ad_id not in seen_ids]
+
     def reset_seen(self, chat_id: int) -> None:
         """Delete seen listing ids for one chat, usually after filter changes."""
         with self._session_factory() as session:
             subscription = self._default_subscription(session, chat_id)
             session.execute(
                 delete(SeenAdRow).where(SeenAdRow.subscription_id == subscription.id)
+            )
+            session.commit()
+
+    def reset_seen_for_subscription(self, subscription_id: int) -> None:
+        """Delete seen listing ids for one saved search."""
+        with self._session_factory() as session:
+            session.execute(
+                delete(SeenAdRow).where(SeenAdRow.subscription_id == subscription_id)
             )
             session.commit()
 
@@ -190,11 +309,7 @@ class BotStorage:
         chat_id: int,
     ) -> SubscriptionRow:
         """Return the default subscription row for compatibility with current bot UI."""
-        chat = session.get(ChatRow, chat_id)
-        if chat is None:
-            chat = ChatRow(id=chat_id)
-            session.add(chat)
-            session.flush()
+        self._ensure_chat(session, chat_id)
 
         subscription = session.scalar(
             select(SubscriptionRow).where(
@@ -226,11 +341,38 @@ class BotStorage:
                 raise
         return subscription
 
+    def _ensure_chat(self, session: Session, chat_id: int) -> ChatRow:
+        """Return an existing chat row or create it."""
+        chat = session.get(ChatRow, chat_id)
+        if chat is not None:
+            return chat
+        chat = ChatRow(id=chat_id)
+        session.add(chat)
+        session.flush()
+        return chat
+
+    def _subscription_by_id(
+        self,
+        session: Session,
+        chat_id: int,
+        subscription_id: int,
+    ) -> SubscriptionRow:
+        """Fetch one subscription and ensure it belongs to ``chat_id``."""
+        subscription = session.scalar(
+            select(SubscriptionRow).where(
+                SubscriptionRow.id == subscription_id,
+                SubscriptionRow.chat_id == chat_id,
+            )
+        )
+        if subscription is None:
+            raise ValueError(f"Unknown subscription: {subscription_id}")
+        return subscription
+
     def _profile_from_subscription(
         self,
         session: Session,
         subscription: SubscriptionRow,
-    ) -> UserProfile:
+    ) -> SearchSubscription:
         """Convert one subscription row into the current bot profile object."""
         seen_ids = session.scalars(
             select(SeenAdRow.ad_id)
@@ -238,8 +380,10 @@ class BotStorage:
             .order_by(SeenAdRow.seen_at.desc())
             .limit(self._max_seen_per_chat)
         ).all()
-        return UserProfile(
+        return SearchSubscription(
             chat_id=subscription.chat_id,
+            id=subscription.id,
+            title=subscription.title,
             enabled=subscription.enabled,
             watch_started_at=_datetime_from_db(subscription.watch_started_at),
             request=_request_from_json(subscription.request_json),

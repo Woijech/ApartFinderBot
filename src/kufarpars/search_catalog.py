@@ -31,6 +31,15 @@ class PriceRange:
     max_price: int | None
 
 
+@dataclass(frozen=True)
+class SimpleOption:
+    """A compact selectable filter option."""
+
+    code: str
+    title: str
+    value: object
+
+
 SEARCH_TARGETS = [
     SearchTarget(
         code="apartment",
@@ -54,6 +63,41 @@ PRICE_RANGES = [
     PriceRange("350_500", "350-500 $", 350, 500),
     PriceRange("500_800", "500-800 $", 500, 800),
     PriceRange("800_1200", "800-1200 $", 800, 1200),
+]
+
+ROOM_OPTIONS = [
+    SimpleOption("any", "Любое", None),
+    SimpleOption("1", "1 комната", 1),
+    SimpleOption("2", "2 комнаты", 2),
+    SimpleOption("3", "3 комнаты", 3),
+    SimpleOption("4", "4 комнаты", 4),
+]
+
+DISTRICT_OPTIONS = [
+    SimpleOption("any", "Любой район", None),
+    SimpleOption("centralny", "Центральный", "Центральный"),
+    SimpleOption("sovetsky", "Советский", "Советский"),
+    SimpleOption("pervomaysky", "Первомайский", "Первомайский"),
+    SimpleOption("partizansky", "Партизанский", "Партизанский"),
+    SimpleOption("zavodskoy", "Заводской", "Заводской"),
+    SimpleOption("leninsky", "Ленинский", "Ленинский"),
+    SimpleOption("oktyabrsky", "Октябрьский", "Октябрьский"),
+    SimpleOption("moskovsky", "Московский", "Московский"),
+    SimpleOption("frunzensky", "Фрунзенский", "Фрунзенский"),
+]
+
+METRO_OPTIONS = [
+    SimpleOption("any", "Любое метро", None),
+    SimpleOption("kamennaya_gorka", "Каменная Горка", "Каменная Горка"),
+    SimpleOption("kuncevshchina", "Кунцевщина", "Кунцевщина"),
+    SimpleOption("sportivnaya", "Спортивная", "Спортивная"),
+    SimpleOption("pushkinskaya", "Пушкинская", "Пушкинская"),
+    SimpleOption("molodezhnaya", "Молодёжная", "Молодёжная"),
+    SimpleOption("frunzenskaya", "Фрунзенская", "Фрунзенская"),
+    SimpleOption("nemiga", "Немига", "Немига"),
+    SimpleOption("oktyabrskaya", "Октябрьская", "Октябрьская"),
+    SimpleOption("ploshchad_pobedy", "Площадь Победы", "Площадь Победы"),
+    SimpleOption("yakuba_kolasa", "Площадь Якуба Коласа", "Площадь Якуба Коласа"),
 ]
 
 
@@ -84,3 +128,30 @@ def price_range_by_code(code: str) -> PriceRange:
         if price_range.code == code:
             return price_range
     raise ValueError(f"Unknown price range: {code}")
+
+
+def room_option_by_code(code: str) -> SimpleOption:
+    """Find a room option by callback code."""
+    return _option_by_code(ROOM_OPTIONS, code, "room")
+
+
+def district_option_by_code(code: str) -> SimpleOption:
+    """Find a district option by callback code."""
+    return _option_by_code(DISTRICT_OPTIONS, code, "district")
+
+
+def metro_option_by_code(code: str) -> SimpleOption:
+    """Find a metro option by callback code."""
+    return _option_by_code(METRO_OPTIONS, code, "metro")
+
+
+def _option_by_code(
+    options: list[SimpleOption],
+    code: str,
+    label: str,
+) -> SimpleOption:
+    """Find one option by code or raise a helpful error."""
+    for option in options:
+        if option.code == code:
+            return option
+    raise ValueError(f"Unknown {label} option: {code}")

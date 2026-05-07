@@ -28,7 +28,11 @@ The bot is controlled with inline buttons. Start it in Telegram:
 Current bot filters:
 
 - property type: apartment or room
-- price range: preset ranges in USD
+- district and metro presets for Minsk
+- room count
+- price range: preset ranges in USD or custom user-entered range
+- include keywords: required words or phrases in title/address/description
+- exclude keywords: words or phrases that make a listing ignored
 - fixed search area: rent in Minsk
 - notifications include gallery photos when Kufar provides them
 - full descriptions are loaded from listing detail pages before sending
@@ -42,12 +46,12 @@ KUFARPARS_BOT_ENABLE_PREVIEW=true
 
 After `/start`, use the buttons:
 
-- `Настроить фильтры`
-- `Тип жилья`
-- `Цена`
+- `Мои поиски`
+- `Создать поиск`
+- `Фильтры`
 - `Включить слежение`
 - `Выключить слежение`
-- `Мои фильтры`
+- `Удалить поиск`
 
 ## Project structure
 
@@ -87,7 +91,7 @@ KUFARPARS_BOT_PREVIEW_IMAGE_URL=https://placehold.co/1200x800/png?text=Kufar+Pre
 Tables:
 
 - `chats` stores Telegram chats.
-- `subscriptions` stores saved search settings and the serialized search request.
+- `subscriptions` stores multiple saved search settings per chat.
 - `seen_ads` stores seen listing ids per subscription.
 - `notification_logs` stores notification send attempts for diagnostics.
 
