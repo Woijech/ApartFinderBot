@@ -19,6 +19,10 @@ class Settings:
     base_url: str = getenv("KUFARPARS_BASE_URL", "https://www.kufar.by")
     realty_url: str = getenv("KUFARPARS_REALTY_URL", "https://re.kufar.by")
     timeout_seconds: float = float(getenv("KUFARPARS_TIMEOUT_SECONDS", "20"))
+    request_retries: int = int(getenv("KUFARPARS_REQUEST_RETRIES", "2"))
+    request_retry_delay_seconds: float = float(
+        getenv("KUFARPARS_REQUEST_RETRY_DELAY_SECONDS", "2")
+    )
     user_agent: str = getenv(
         "KUFARPARS_USER_AGENT",
         "KufarPars/0.1 (+local research parser)",

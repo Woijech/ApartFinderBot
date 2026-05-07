@@ -27,7 +27,7 @@ from aiogram.types import (
 )
 
 from kufarpars.bot_storage import BotStorage, UserProfile
-from kufarpars.client import KufarClient, SearchRequest
+from kufarpars.client import KufarClient, KufarNetworkError, SearchRequest
 from kufarpars.config import settings
 from kufarpars.models import Listing
 from kufarpars.search_catalog import (
@@ -180,7 +180,16 @@ async def run_once_callback(callback: CallbackQuery) -> None:
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.answer("Проверяю Kufar...")
     await callback.message.answer("Проверяю Kufar по выбранным фильтрам...")
-    listings = await fetch_listings(profile)
+    try:
+        listings = await fetch_listings(profile)
+    except KufarNetworkError:
+        logging.exception("Kufar is temporarily unavailable")
+        await callback.message.answer(
+            "Kufar сейчас не отвечает или отвечает слишком медленно. "
+            "Попробуй ещё раз чуть позже.",
+            reply_markup=main_menu_keyboard(profile),
+        )
+        return
     if not listings:
         await callback.message.answer(
             "Ничего не нашёл по текущим фильтрам.",
@@ -202,7 +211,16 @@ async def watch_on_callback(callback: CallbackQuery) -> None:
     """Enable monitoring and remember current listings as already seen."""
     profile = ensure_default_profile(callback.message.chat.id)
     await callback.answer("Включаю слежение...")
-    listings = await fetch_listings(profile)
+    try:
+        listings = await fetch_listings(profile)
+    except KufarNetworkError:
+        logging.exception("Kufar is temporarily unavailable")
+        await callback.message.answer(
+            "Не смог проверить Kufar перед включением слежения. "
+            "Попробуй включить ещё раз чуть позже.",
+            reply_markup=main_menu_keyboard(profile),
+        )
+        return
     profile.enabled = True
     profile.seen_ids = merge_seen([], listings)
     storage.update(profile)
@@ -239,7 +257,7 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     """Check one profile and send only listings that were not seen before."""
     try:
         listings = await fetch_listings(profile)
-    except Exception:
+    except KufarNetworkError:
         logging.exception("Failed to check Kufar for chat %s", profile.chat_id)
         return
 

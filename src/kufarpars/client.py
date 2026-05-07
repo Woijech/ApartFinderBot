@@ -24,6 +24,10 @@ PROPERTY_PATHS = {"apartment": "kvartiru", "room": "komnatu"}
 SORT_VALUES = {"newest": None, "cheap": "prc.a", "expensive": "prc.d"}
 
 
+class KufarNetworkError(RuntimeError):
+    """Raised when Kufar cannot be reached after retry attempts."""
+
+
 @dataclass(frozen=True)
 class SearchRequest:
     """A high-level search request that can be converted into a Kufar URL."""
@@ -75,10 +79,18 @@ class KufarClient:
         self,
         base_url: str = settings.realty_url,
         timeout_seconds: float = settings.timeout_seconds,
+        retries: int = settings.request_retries,
+        retry_delay_seconds: float = settings.request_retry_delay_seconds,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._retries = max(retries, 0)
+        self._retry_delay_seconds = max(retry_delay_seconds, 0)
         self._client = httpx.Client(
-            timeout=timeout_seconds,
+            timeout=httpx.Timeout(
+                timeout_seconds,
+                connect=timeout_seconds,
+                read=timeout_seconds,
+            ),
             follow_redirects=True,
             headers={
                 "Accept": "text/html,application/xhtml+xml",
@@ -137,9 +149,19 @@ class KufarClient:
         """Fetch an absolute or site-relative URL and return response text."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
-        response = self._client.get(url)
-        response.raise_for_status()
-        return response.text
+        last_error: Exception | None = None
+        for attempt in range(self._retries + 1):
+            try:
+                response = self._client.get(url)
+                response.raise_for_status()
+                return response.text
+            except (httpx.TimeoutException, httpx.NetworkError) as error:
+                last_error = error
+                if attempt < self._retries:
+                    sleep(self._retry_delay_seconds)
+                    continue
+                break
+        raise KufarNetworkError(f"Kufar request failed: {url}") from last_error
 
     def _url(self, path: str, params: dict[str, str]) -> str:
         """Build an absolute URL for a Kufar path and query dictionary."""
