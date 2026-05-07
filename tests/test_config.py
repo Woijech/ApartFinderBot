@@ -31,3 +31,9 @@ def test_settings_allows_disabling_legacy_json_migration() -> None:
     settings = Settings(legacy_bot_state_path="", _env_file=None)
 
     assert settings.legacy_bot_state_path is None
+
+
+def test_settings_parses_allowed_chat_ids() -> None:
+    settings = Settings(allowed_chat_ids="123, 456", _env_file=None)
+
+    assert settings.allowed_chat_ids == {123, 456}

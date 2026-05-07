@@ -16,9 +16,9 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from html import escape
 from sys import exit
-from typing import TypeVar
+from typing import Any, TypeVar
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
@@ -28,6 +28,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InputMediaPhoto,
     Message,
+    TelegramObject,
 )
 
 from kufarpars.bot_storage import BotStorage, UserProfile
@@ -54,6 +55,7 @@ from kufarpars.telegram_formatting import (
 )
 
 router = Router()
+logger = logging.getLogger(__name__)
 T = TypeVar("T")
 profile_locks: dict[int, asyncio.Lock] = {}
 pending_text_inputs: dict[int, tuple[int, str]] = {}
@@ -76,6 +78,40 @@ CALLBACK_WATCH_OFF = "action:watch_off"
 CALLBACK_SETTINGS = "action:settings"
 
 
+class AccessMiddleware(BaseMiddleware):
+    """Block Telegram chats that are not explicitly allowed."""
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        """Allow the update only when chat id passes configured allowlist."""
+        chat_id = event_chat_id(event)
+        if chat_id is None or is_chat_allowed(chat_id):
+            return await handler(event, data)
+        if isinstance(event, Message):
+            await event.answer("🔒 Бот приватный. Этот чат не разрешён.")
+        elif isinstance(event, CallbackQuery):
+            await event.answer("Бот приватный", show_alert=True)
+        return None
+
+
+def event_chat_id(event: TelegramObject) -> int | None:
+    """Extract chat id from supported Telegram update event objects."""
+    if isinstance(event, Message):
+        return event.chat.id
+    if isinstance(event, CallbackQuery) and event.message is not None:
+        return event.message.chat.id
+    return None
+
+
+def is_chat_allowed(chat_id: int) -> bool:
+    """Return whether a chat is allowed to use the bot."""
+    return not settings.allowed_chat_ids or chat_id in settings.allowed_chat_ids
+
+
 @router.message(Command("start", "menu"))
 async def start(message: Message) -> None:
     """Open the main menu and create a default profile if needed."""
@@ -94,6 +130,17 @@ async def show_settings(message: Message) -> None:
     await message.answer(
         subscriptions_text(message.chat.id),
         reply_markup=searches_keyboard(message.chat.id),
+        disable_web_page_preview=True,
+    )
+
+
+@router.message(Command("status"))
+async def show_status(message: Message) -> None:
+    """Show monitoring status for the current chat."""
+    ensure_default_profile(message.chat.id)
+    await message.answer(
+        status_text(message.chat.id),
+        reply_markup=main_menu_keyboard(),
         disable_web_page_preview=True,
     )
 
@@ -454,6 +501,7 @@ async def sleep_or_stop(stop_event: asyncio.Event, delay_seconds: float) -> None
 
 async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     """Check one profile and send only listings that were not seen before."""
+    started_at = datetime.now(UTC)
     try:
         listings = await run_profile_check(
             profile,
@@ -463,7 +511,11 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     except ProfileCheckAlreadyRunning:
         return
     except KufarNetworkError:
-        logging.warning("Failed to check Kufar for chat %s", profile.chat_id)
+        logger.warning(
+            "kufar_check_failed chat_id=%s subscription_id=%s",
+            profile.chat_id,
+            profile.id,
+        )
         return
 
     if profile.watch_started_at is None:
@@ -488,6 +540,13 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     ]
     if not new_listings:
         mark_subscription_seen(profile, listings)
+        logger.info(
+            "kufar_check_no_new chat_id=%s subscription_id=%s total=%s duration_ms=%s",
+            profile.chat_id,
+            profile.id,
+            len(listings),
+            elapsed_ms(started_at),
+        )
         return
 
     notification_limit = max(0, settings.bot_max_notifications_per_check)
@@ -501,9 +560,21 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     ]
     for listing in matched_enriched:
         await send_listing(bot, profile.chat_id, listing)
-        storage.log_notification(profile.chat_id, listing.ad_id, "sent")
+        if profile.id is not None:
+            storage.log_notification_for_subscription(profile.id, listing.ad_id, "sent")
+        else:
+            storage.log_notification(profile.chat_id, listing.ad_id, "sent")
     mark_subscription_seen(profile, listings)
     storage.update_subscription(profile)
+    logger.info(
+        "kufar_notifications_sent chat_id=%s subscription_id=%s total=%s sent=%s "
+        "duration_ms=%s",
+        profile.chat_id,
+        profile.id,
+        len(listings),
+        len(matched_enriched),
+        elapsed_ms(started_at),
+    )
 
 
 async def fetch_listings(profile: UserProfile) -> list[Listing]:
@@ -584,6 +655,11 @@ def mark_subscription_seen(profile: UserProfile, listings: list[Listing]) -> Non
         return
     storage.mark_seen(profile.chat_id, ad_ids)
     profile.seen_ids = storage.recent_seen_ids(profile.chat_id)
+
+
+def elapsed_ms(started_at: datetime) -> int:
+    """Return elapsed milliseconds from a UTC start timestamp."""
+    return int((datetime.now(UTC) - started_at).total_seconds() * 1000)
 
 
 async def fetch_listing_details(listings: list[Listing]) -> list[Listing]:
@@ -1128,6 +1204,21 @@ def subscriptions_text(chat_id: int) -> str:
     return "\n".join(lines)
 
 
+def status_text(chat_id: int) -> str:
+    """Format runtime status for one chat."""
+    subscriptions = storage.list_subscriptions(chat_id)
+    enabled = [subscription for subscription in subscriptions if subscription.enabled]
+    return (
+        "📊 <b>Статус бота</b>\n\n"
+        f"🆔 Chat ID: <code>{chat_id}</code>\n"
+        f"📌 Поисков: <b>{len(subscriptions)}</b>\n"
+        f"🔔 Активных: <b>{len(enabled)}</b>\n"
+        f"⏱ Интервал проверки: <b>{settings.bot_poll_interval_seconds:g} сек.</b>\n"
+        f"🖼 Фото в уведомлении: <b>{settings.bot_max_images}</b>\n"
+        f"🧪 Preview: <b>{'включён' if settings.bot_enable_preview else 'выключен'}</b>"
+    )
+
+
 def subscription_text(subscription: UserProfile) -> str:
     """Format one saved search for display."""
     return (
@@ -1235,13 +1326,18 @@ async def run_bot() -> None:
     telegram_bot_token = settings.telegram_bot_token_value
     if not telegram_bot_token:
         raise RuntimeError("Set TELEGRAM_BOT_TOKEN in environment or .env file.")
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     bot = Bot(
         token=telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher()
+    router.message.middleware(AccessMiddleware())
+    router.callback_query.middleware(AccessMiddleware())
     dispatcher.include_router(router)
     stop_event = asyncio.Event()
     notifier_task = asyncio.create_task(notifier_loop(bot, stop_event))

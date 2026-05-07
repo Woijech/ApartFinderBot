@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     bot_preview_image_url: str = (
         "https://placehold.co/1200x800/png?text=Kufar+Preview"
     )
+    allowed_chat_ids: set[int] = Field(default_factory=set)
     bot_max_pages: int = Field(default=1, ge=1)
     bot_page_delay_seconds: float = Field(default=1, ge=0)
     bot_max_images: int = Field(default=3, ge=0, le=10)
@@ -79,6 +80,16 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except ZoneInfoNotFoundError as error:
             raise ValueError(f"unknown timezone: {value}") from error
+        return value
+
+    @field_validator("allowed_chat_ids", mode="before")
+    @classmethod
+    def parse_allowed_chat_ids(cls, value: object) -> object:
+        """Accept comma-separated chat ids in addition to JSON lists."""
+        if value in (None, ""):
+            return set()
+        if isinstance(value, str):
+            return {int(item.strip()) for item in value.split(",") if item.strip()}
         return value
 
     @property

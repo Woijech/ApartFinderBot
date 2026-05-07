@@ -53,6 +53,11 @@ After `/start`, use the buttons:
 - `Выключить слежение`
 - `Удалить поиск`
 
+Useful commands:
+
+- `/status` shows saved-search and monitoring status.
+- `/preview` sends a fake listing when preview mode is enabled.
+
 ## Project structure
 
 - `models.py` contains parser-independent domain objects.
@@ -76,6 +81,9 @@ changing `KUFARPARS_DATABASE_URL`:
 ```env
 KUFARPARS_DATABASE_URL=sqlite:///data/kufarpars.sqlite3
 # KUFARPARS_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/kufarpars
+POSTGRES_DB=kufarpars
+POSTGRES_USER=kufarpars
+POSTGRES_PASSWORD=change-me
 KUFARPARS_SEEN_TTL_DAYS=60
 KUFARPARS_MAX_SEEN_PER_CHAT=5000
 KUFARPARS_BOT_MAX_NOTIFICATIONS_PER_CHECK=5
@@ -86,6 +94,7 @@ KUFARPARS_BOT_FETCH_RETRY_DELAY_SECONDS=1
 KUFARPARS_BOT_DISPLAY_TIMEZONE=Europe/Minsk
 KUFARPARS_BOT_ENABLE_PREVIEW=false
 KUFARPARS_BOT_PREVIEW_IMAGE_URL=https://placehold.co/1200x800/png?text=Kufar+Preview
+KUFARPARS_ALLOWED_CHAT_IDS=
 ```
 
 Tables:
@@ -101,6 +110,20 @@ Schema migrations are managed with Alembic:
 alembic upgrade head
 ```
 
+Docker Compose includes PostgreSQL:
+
+```env
+KUFARPARS_DATABASE_URL=postgresql+psycopg://kufarpars:kufarpars@postgres:5432/kufarpars
+```
+
+```bash
+docker compose up -d
+```
+
+The Docker image runs `alembic upgrade head` before starting the bot. You can
+still run migrations manually with `docker compose run --rm bot alembic upgrade
+head` when you want to check them separately.
+
 Old JSON state from `data/kufarpars_bot_state.json` is imported once when
 `KUFARPARS_LEGACY_BOT_STATE_PATH` points to it.
 
@@ -115,3 +138,6 @@ Copy `.env.example` to `.env` and adjust values for local use. Runtime
 configuration is validated with Pydantic Settings: invalid numbers, blank
 required strings, or an unknown timezone fail fast at startup, and the Telegram
 token is handled as a secret value.
+
+Set `KUFARPARS_ALLOWED_CHAT_IDS` to a comma-separated list of Telegram chat ids
+when the bot should be private.

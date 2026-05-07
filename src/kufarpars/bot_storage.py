@@ -303,6 +303,25 @@ class BotStorage:
             )
             session.commit()
 
+    def log_notification_for_subscription(
+        self,
+        subscription_id: int,
+        ad_id: int,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Persist one notification attempt for a saved search."""
+        with self._session_factory() as session:
+            session.add(
+                NotificationLogRow(
+                    subscription_id=subscription_id,
+                    ad_id=ad_id,
+                    status=status,
+                    error=error,
+                )
+            )
+            session.commit()
+
     def _default_subscription(
         self,
         session: Session,

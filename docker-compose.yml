@@ -1,0 +1,31 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    environment:
+      KUFARPARS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-kufarpars}:${POSTGRES_PASSWORD:-kufarpars}@postgres:5432/${POSTGRES_DB:-kufarpars}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kufarpars}
+      POSTGRES_USER: ${POSTGRES_USER:-kufarpars}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kufarpars}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kufarpars -d kufarpars"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
