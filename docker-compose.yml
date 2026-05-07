@@ -8,8 +8,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./data:/app/data
     restart: unless-stopped
 
   postgres:

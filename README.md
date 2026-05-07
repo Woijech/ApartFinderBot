@@ -75,12 +75,11 @@ differs from real estate listings.
 
 ## Storage
 
-The bot uses SQLAlchemy with SQLite by default and can run on PostgreSQL by
-changing `KUFARPARS_DATABASE_URL`:
+The bot uses PostgreSQL only. Docker Compose builds the database URL from
+`POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD`, so you do not need to
+write `KUFARPARS_DATABASE_URL` in `.env` for normal deployment:
 
 ```env
-KUFARPARS_DATABASE_URL=sqlite:///data/kufarpars.sqlite3
-# KUFARPARS_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/kufarpars
 POSTGRES_DB=kufarpars
 POSTGRES_USER=kufarpars
 POSTGRES_PASSWORD=change-me
@@ -110,11 +109,8 @@ Schema migrations are managed with Alembic:
 alembic upgrade head
 ```
 
-Docker Compose includes PostgreSQL:
-
-```env
-KUFARPARS_DATABASE_URL=postgresql+psycopg://kufarpars:kufarpars@postgres:5432/kufarpars
-```
+Docker Compose includes PostgreSQL and passes the runtime database URL to the
+bot container automatically:
 
 ```bash
 docker compose up -d
@@ -123,9 +119,6 @@ docker compose up -d
 The Docker image runs `alembic upgrade head` before starting the bot. You can
 still run migrations manually with `docker compose run --rm bot alembic upgrade
 head` when you want to check them separately.
-
-Old JSON state from `data/kufarpars_bot_state.json` is imported once when
-`KUFARPARS_LEGACY_BOT_STATE_PATH` points to it.
 
 `KUFARPARS_BOT_MAX_NOTIFICATIONS_PER_CHECK` limits how many new listings are
 enriched with detail-page data and sent during one background check. The bot

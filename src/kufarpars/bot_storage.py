@@ -1,8 +1,7 @@
 """Storage repository for Telegram bot profiles and seen listings.
 
 The public methods intentionally speak in bot-domain terms while SQLAlchemy
-owns the database details underneath. SQLite remains the local default, and the
-same models work with PostgreSQL through ``KUFARPARS_DATABASE_URL``.
+owns the database details underneath. Runtime storage is PostgreSQL-only.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.engine import Engine
@@ -45,14 +43,12 @@ class BotStorage:
     def __init__(
         self,
         database_url: str,
-        legacy_json_path: str | None = None,
         seen_ttl_days: int = 60,
         max_seen_per_chat: int = 5000,
         create_schema: bool = True,
     ) -> None:
-        """Create storage, initialize schema, and migrate old JSON state if found."""
-        self._database_url = _normalize_database_url(database_url)
-        self._legacy_json_path = Path(legacy_json_path) if legacy_json_path else None
+        """Create storage and optionally initialize the database schema."""
+        self._database_url = _validate_database_url(database_url)
         self._seen_ttl_days = seen_ttl_days
         self._max_seen_per_chat = max_seen_per_chat
         self._engine = _create_engine(self._database_url)
@@ -63,7 +59,6 @@ class BotStorage:
             expire_on_commit=False,
             future=True,
         )
-        self._migrate_legacy_json()
 
     def close(self) -> None:
         """Dispose the underlying SQLAlchemy engine."""
@@ -473,33 +468,17 @@ class BotStorage:
                 )
             )
 
-    def _migrate_legacy_json(self) -> None:
-        """Import profiles from the previous JSON storage file once."""
-        if self._legacy_json_path is None or not self._legacy_json_path.exists():
-            return
-        marker_path = Path(str(self._legacy_json_path) + ".sqlalchemy_migrated")
-        if marker_path.exists():
-            return
-        data = json.loads(self._legacy_json_path.read_text(encoding="utf-8"))
-        for item in (data.get("profiles") or {}).values():
-            profile = _profile_from_legacy_dict(item)
-            self.update(profile)
-        marker_path.write_text(_now_iso(), encoding="utf-8")
-
 
 def _create_engine(database_url: str) -> Engine:
-    """Create a SQLAlchemy engine with SQLite-friendly defaults."""
-    connect_args = (
-        {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    )
-    return create_engine(database_url, connect_args=connect_args, future=True)
+    """Create a SQLAlchemy engine for PostgreSQL."""
+    return create_engine(database_url, future=True)
 
 
-def _normalize_database_url(value: str) -> str:
-    """Accept full SQLAlchemy URLs and legacy filesystem paths."""
-    if "://" in value:
-        return value
-    return f"sqlite:///{value}"
+def _validate_database_url(value: str) -> str:
+    """Reject non-PostgreSQL storage URLs."""
+    if not value.startswith(("postgresql://", "postgresql+psycopg://")):
+        raise ValueError("BotStorage requires a PostgreSQL database URL")
+    return value
 
 
 def _request_to_json(request: SearchRequest) -> str:
@@ -511,25 +490,6 @@ def _request_from_json(value: str) -> SearchRequest:
     """Deserialize SearchRequest from JSON stored in the database."""
     data = json.loads(value)
     return SearchRequest(**data)
-
-
-def _profile_from_legacy_dict(data: dict[str, object]) -> UserProfile:
-    """Deserialize a profile from the old JSON file format."""
-    request_data = data.get("request") or {}
-    if not isinstance(request_data, dict):
-        request_data = {}
-    return UserProfile(
-        chat_id=int(data["chat_id"]),
-        enabled=bool(data.get("enabled")),
-        watch_started_at=None,
-        request=SearchRequest(**request_data),
-        seen_ids=[int(item) for item in data.get("seen_ids", [])],
-    )
-
-
-def _now_iso() -> str:
-    """Return a timezone-aware timestamp for marker files."""
-    return datetime.now(UTC).isoformat()
 
 
 def _datetime_to_db(value: datetime | None) -> datetime | None:

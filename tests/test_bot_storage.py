@@ -1,11 +1,28 @@
+import os
 from datetime import UTC, datetime
+
+import pytest
 
 from kufarpars.bot_storage import BotStorage
 from kufarpars.client import SearchRequest
+from kufarpars.db import Base
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("KUFARPARS_TEST_DATABASE_URL"),
+    reason="PostgreSQL storage tests need KUFARPARS_TEST_DATABASE_URL",
+)
 
 
-def test_bot_storage_persists_profile_and_seen_ids(tmp_path) -> None:
-    storage = BotStorage(str(tmp_path / "bot.sqlite3"))
+def make_storage() -> BotStorage:
+    """Create a clean PostgreSQL-backed storage repository for one test."""
+    storage = BotStorage(os.environ["KUFARPARS_TEST_DATABASE_URL"])
+    Base.metadata.drop_all(storage.engine)
+    Base.metadata.create_all(storage.engine)
+    return storage
+
+
+def test_bot_storage_persists_profile_and_seen_ids() -> None:
+    storage = make_storage()
     profile = storage.get(123)
     profile.enabled = True
     profile.watch_started_at = datetime(2026, 5, 7, 12, 0, tzinfo=UTC)
@@ -23,8 +40,8 @@ def test_bot_storage_persists_profile_and_seen_ids(tmp_path) -> None:
     assert storage.unseen_ids(123, [2, 3, 4]) == [4]
 
 
-def test_bot_storage_resets_seen_ids(tmp_path) -> None:
-    storage = BotStorage(str(tmp_path / "bot.sqlite3"))
+def test_bot_storage_resets_seen_ids() -> None:
+    storage = make_storage()
     storage.get(123)
     storage.mark_seen(123, [1, 2])
 
@@ -33,8 +50,8 @@ def test_bot_storage_resets_seen_ids(tmp_path) -> None:
     assert storage.recent_seen_ids(123) == []
 
 
-def test_bot_storage_supports_multiple_subscriptions(tmp_path) -> None:
-    storage = BotStorage(str(tmp_path / "bot.sqlite3"))
+def test_bot_storage_supports_multiple_subscriptions() -> None:
+    storage = make_storage()
     first = storage.create_subscription(
         123,
         "Комната",

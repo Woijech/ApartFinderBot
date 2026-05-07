@@ -27,13 +27,12 @@ def test_settings_rejects_unknown_timezone() -> None:
         Settings(bot_display_timezone="Mars/Olympus", _env_file=None)
 
 
-def test_settings_allows_disabling_legacy_json_migration() -> None:
-    settings = Settings(legacy_bot_state_path="", _env_file=None)
-
-    assert settings.legacy_bot_state_path is None
-
-
 def test_settings_parses_allowed_chat_ids() -> None:
     settings = Settings(allowed_chat_ids="123, 456", _env_file=None)
 
     assert settings.allowed_chat_ids == {123, 456}
+
+
+def test_settings_rejects_sqlite_database_url() -> None:
+    with pytest.raises(ValidationError):
+        Settings(database_url="sqlite:///data/kufarpars.sqlite3", _env_file=None)

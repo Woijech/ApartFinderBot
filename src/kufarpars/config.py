@@ -30,8 +30,9 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="TELEGRAM_BOT_TOKEN",
     )
-    database_url: str = "sqlite:///data/kufarpars.sqlite3"
-    legacy_bot_state_path: str | None = "data/kufarpars_bot_state.json"
+    database_url: str = (
+        "postgresql+psycopg://kufarpars:kufarpars@localhost:5432/kufarpars"
+    )
     seen_ttl_days: int = Field(default=60, ge=1)
     max_seen_per_chat: int = Field(default=5000, ge=1)
     bot_poll_interval_seconds: float = Field(default=300, gt=0)
@@ -64,14 +65,6 @@ class Settings(BaseSettings):
             raise ValueError("must not be blank")
         return value
 
-    @field_validator("legacy_bot_state_path", mode="before")
-    @classmethod
-    def empty_legacy_path_to_none(cls, value: object) -> object:
-        """Allow disabling legacy JSON migration with an empty env value."""
-        if value == "":
-            return None
-        return value
-
     @field_validator("bot_display_timezone")
     @classmethod
     def validate_timezone(cls, value: str) -> str:
@@ -80,6 +73,14 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except ZoneInfoNotFoundError as error:
             raise ValueError(f"unknown timezone: {value}") from error
+        return value
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_postgres_url(cls, value: str) -> str:
+        """Keep runtime storage on PostgreSQL only."""
+        if not value.startswith(("postgresql://", "postgresql+psycopg://")):
+            raise ValueError("database_url must be a PostgreSQL SQLAlchemy URL")
         return value
 
     @field_validator("allowed_chat_ids", mode="before")

@@ -59,12 +59,36 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 profile_locks: dict[int, asyncio.Lock] = {}
 pending_text_inputs: dict[int, tuple[int, str]] = {}
-storage = BotStorage(
-    settings.database_url,
-    legacy_json_path=settings.legacy_bot_state_path,
-    seen_ttl_days=settings.seen_ttl_days,
-    max_seen_per_chat=settings.max_seen_per_chat,
-)
+
+class LazyBotStorage:
+    """Initialize PostgreSQL storage only when bot code first needs it."""
+
+    def __init__(self) -> None:
+        """Create an empty lazy storage holder."""
+        self._instance: BotStorage | None = None
+
+    def get_instance(self) -> BotStorage:
+        """Return the real storage repository, creating it on first use."""
+        if self._instance is None:
+            self._instance = BotStorage(
+                settings.database_url,
+                seen_ttl_days=settings.seen_ttl_days,
+                max_seen_per_chat=settings.max_seen_per_chat,
+                create_schema=False,
+            )
+        return self._instance
+
+    def close(self) -> None:
+        """Close storage if it has been initialized."""
+        if self._instance is not None:
+            self._instance.close()
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate storage method calls to the real repository."""
+        return getattr(self.get_instance(), name)
+
+
+storage = LazyBotStorage()
 
 CALLBACK_MAIN = "menu:main"
 CALLBACK_SEARCHES = "menu:searches"
