@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     request_retries: int = Field(default=2, ge=0)
     request_retry_delay_seconds: float = Field(default=2, ge=0)
     user_agent: str = "KufarPars/0.1 (+local research parser)"
+    http_proxy: str | None = None
     telegram_bot_token: SecretStr | None = Field(
         default=None,
         validation_alias="TELEGRAM_BOT_TOKEN",
@@ -81,6 +82,24 @@ class Settings(BaseSettings):
         """Keep runtime storage on PostgreSQL only."""
         if not value.startswith(("postgresql://", "postgresql+psycopg://")):
             raise ValueError("database_url must be a PostgreSQL SQLAlchemy URL")
+        return value
+
+    @field_validator("http_proxy", mode="before")
+    @classmethod
+    def empty_http_proxy_to_none(cls, value: object) -> object:
+        """Allow disabling proxy support with an empty env value."""
+        if value == "":
+            return None
+        return value
+
+    @field_validator("http_proxy")
+    @classmethod
+    def validate_http_proxy(cls, value: str | None) -> str | None:
+        """Validate the optional HTTP proxy URL used for geographic testing."""
+        if value is None:
+            return None
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("http_proxy must start with http:// or https://")
         return value
 
     @field_validator("allowed_chat_ids")

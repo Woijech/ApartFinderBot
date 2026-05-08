@@ -85,11 +85,14 @@ class KufarClient:
         timeout_seconds: float = settings.timeout_seconds,
         retries: int = settings.request_retries,
         retry_delay_seconds: float = settings.request_retry_delay_seconds,
+        proxy_url: str | None = settings.http_proxy,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._retries = max(retries, 0)
         self._retry_delay_seconds = max(retry_delay_seconds, 0)
+        self._proxy_url = proxy_url
         self._client = httpx.Client(
+            proxy=proxy_url,
             timeout=httpx.Timeout(
                 timeout_seconds,
                 connect=timeout_seconds,

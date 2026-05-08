@@ -33,6 +33,17 @@ def test_settings_parses_allowed_chat_ids() -> None:
     assert settings.allowed_chat_id_set == {123, 456}
 
 
+def test_settings_parses_empty_http_proxy_as_none() -> None:
+    settings = Settings(http_proxy="", _env_file=None)
+
+    assert settings.http_proxy is None
+
+
+def test_settings_rejects_invalid_http_proxy_scheme() -> None:
+    with pytest.raises(ValidationError):
+        Settings(http_proxy="socks5://127.0.0.1:9050", _env_file=None)
+
+
 def test_settings_rejects_sqlite_database_url() -> None:
     with pytest.raises(ValidationError):
         Settings(database_url="sqlite:///data/kufarpars.sqlite3", _env_file=None)

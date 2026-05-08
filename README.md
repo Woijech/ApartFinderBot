@@ -104,6 +104,7 @@ KUFARPARS_BOT_DISPLAY_TIMEZONE=Europe/Minsk
 KUFARPARS_BOT_ENABLE_PREVIEW=false
 KUFARPARS_BOT_PREVIEW_IMAGE_URL=https://placehold.co/1200x800/png?text=Kufar+Preview
 KUFARPARS_ALLOWED_CHAT_IDS=
+KUFARPARS_HTTP_PROXY=
 ```
 
 Tables:
@@ -144,3 +145,20 @@ token is handled as a secret value.
 
 Set `KUFARPARS_ALLOWED_CHAT_IDS` to a comma-separated list of Telegram chat ids
 when the bot should be private.
+
+## Geographic Testing
+
+For geographic availability checks through your own proxy or gateway, set one
+explicit proxy URL:
+
+```env
+KUFARPARS_HTTP_PROXY=http://user:password@host:port
+```
+
+Leave it empty to connect directly from the server. After changing `.env`,
+rebuild the bot container:
+
+```bash
+docker compose up -d --build
+docker compose logs -f bot
+```

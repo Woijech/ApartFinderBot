@@ -44,3 +44,9 @@ def test_client_wraps_forbidden_status_as_network_error() -> None:
 
     with pytest.raises(KufarNetworkError):
         client.fetch_url("https://example.test/status/403")
+
+
+def test_client_accepts_explicit_proxy_url() -> None:
+    client = KufarClient(proxy_url="http://127.0.0.1:8080")
+
+    assert client._proxy_url == "http://127.0.0.1:8080"
