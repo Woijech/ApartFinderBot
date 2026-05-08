@@ -159,7 +159,11 @@ class KufarClient:
                 response = self._client.get(url)
                 response.raise_for_status()
                 return response.text
-            except (httpx.TimeoutException, httpx.NetworkError) as error:
+            except (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.HTTPStatusError,
+            ) as error:
                 last_error = error
                 if attempt < self._retries:
                     sleep(self._retry_delay_seconds)

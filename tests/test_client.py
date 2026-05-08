@@ -1,4 +1,7 @@
-from kufarpars.client import SearchRequest
+import httpx
+import pytest
+
+from kufarpars.client import KufarClient, KufarNetworkError, SearchRequest
 
 
 def test_search_request_builds_rent_url_parts() -> None:
@@ -29,3 +32,15 @@ def test_search_request_keeps_local_only_filters_out_of_kufar_params() -> None:
     assert "metro" not in params
     assert "include_keywords" not in params
     assert "exclude_keywords" not in params
+
+
+def test_client_wraps_forbidden_status_as_network_error() -> None:
+    client = KufarClient(retries=0)
+    client._client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(403, request=request)
+        )
+    )
+
+    with pytest.raises(KufarNetworkError):
+        client.fetch_url("https://example.test/status/403")
