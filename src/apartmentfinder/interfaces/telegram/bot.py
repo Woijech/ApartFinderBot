@@ -1320,7 +1320,6 @@ def filters_menu_text(profile: UserProfile) -> str:
 def settings_text(profile: UserProfile) -> str:
     """Format the current profile settings for display in Telegram."""
     request = profile.request
-    params = "&".join(f"{key}={value}" for key, value in request.params().items())
     return (
         f"🔔 <b>Статус:</b> {status_title(profile)}\n"
         "📍 <b>Город:</b> Минск\n"
@@ -1332,7 +1331,7 @@ def settings_text(profile: UserProfile) -> str:
         f"🚇 <b>Метро:</b> {request.metro or 'любое'}\n"
         f"➕ <b>Ключевые:</b> {keywords_title(request.include_keywords)}\n"
         f"➖ <b>Исключить:</b> {keywords_title(request.exclude_keywords)}\n"
-        f"🔎 <b>Поиск:</b> <code>{escape(request.path())}?{escape(params)}</code>"
+        "🔎 <b>Источники:</b> Kufar + Realt"
     )
 
 
