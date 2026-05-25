@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     bot_max_pages: int = Field(default=1, ge=1)
     bot_page_delay_seconds: float = Field(default=1, ge=0)
     bot_max_images: int = Field(default=3, ge=0, le=10)
+    browser_fetch_enabled: bool = False
+    browser_fetch_cdp_url: str = "http://cloakbrowser:9222"
+    browser_fetch_timeout_seconds: float = Field(default=20, gt=0)
+    browser_fetch_wait_until: str = "networkidle"
+    browser_fetch_fallback_on_empty: bool = True
+    browser_fetch_fingerprint_seed: str | None = None
 
     @field_validator(
         "kufar_base_url",
@@ -60,6 +66,8 @@ class Settings(BaseSettings):
         "database_url",
         "bot_display_timezone",
         "bot_preview_image_url",
+        "browser_fetch_cdp_url",
+        "browser_fetch_wait_until",
     )
     @classmethod
     def validate_not_blank(cls, value: str) -> str:
@@ -111,6 +119,33 @@ class Settings(BaseSettings):
             return None
         if not value.startswith(("http://", "https://")):
             raise ValueError("http_proxy must start with http:// or https://")
+        return value
+
+    @field_validator("browser_fetch_cdp_url")
+    @classmethod
+    def validate_browser_fetch_cdp_url(cls, value: str) -> str:
+        """Validate the CDP endpoint used by the optional browser fallback."""
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("browser_fetch_cdp_url must start with http:// or https://")
+        return value.rstrip("/")
+
+    @field_validator("browser_fetch_wait_until")
+    @classmethod
+    def validate_browser_fetch_wait_until(cls, value: str) -> str:
+        """Validate Playwright wait modes accepted by page.goto."""
+        if value not in {"commit", "domcontentloaded", "load", "networkidle"}:
+            raise ValueError(
+                "browser_fetch_wait_until must be commit, domcontentloaded, "
+                "load, or networkidle"
+            )
+        return value
+
+    @field_validator("browser_fetch_fingerprint_seed", mode="before")
+    @classmethod
+    def empty_browser_fingerprint_seed_to_none(cls, value: object) -> object:
+        """Allow disabling fingerprint scoping with an empty env value."""
+        if value == "":
+            return None
         return value
 
     @field_validator("allowed_chat_ids")

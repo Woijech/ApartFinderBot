@@ -10,6 +10,8 @@ from urllib.parse import urlencode, urlparse
 import httpx
 
 from apartmentfinder.domain.models import Listing, SearchRequest
+from apartmentfinder.infrastructure import browser_fetcher
+from apartmentfinder.infrastructure.browser_fetcher import BrowserFetchError
 from apartmentfinder.infrastructure.config import settings
 from apartmentfinder.infrastructure.sources.kufar.parser import (
     parse_detail_page,
@@ -107,7 +109,29 @@ class KufarClient:
 
     def search_page(self, path: str, params: dict[str, str]):
         """Fetch and parse one Kufar search page."""
-        return parse_search_page(self.fetch_html(path, params))
+        url = self._url(path, params)
+        html = self.fetch_url(url)
+        try:
+            result = parse_search_page(html)
+        except Exception:
+            if not settings.browser_fetch_enabled:
+                raise
+            logger.warning("source_parse_failed_using_browser source=kufar url=%s", url)
+            try:
+                result = parse_search_page(self.fetch_url_with_browser(url))
+            except BrowserFetchError as error:
+                raise KufarNetworkError(f"Kufar request failed: {url}") from error
+        if should_retry_empty_result(result):
+            logger.warning(
+                "source_parse_empty_using_browser source=kufar total=%s url=%s",
+                result.total,
+                url,
+            )
+            try:
+                return parse_search_page(self.fetch_url_with_browser(url))
+            except BrowserFetchError as error:
+                raise KufarNetworkError(f"Kufar request failed: {url}") from error
+        return result
 
     def fetch_listing_detail(self, listing: Listing) -> Listing:
         """Fetch a listing detail page to get full description and gallery URLs."""
@@ -166,7 +190,19 @@ class KufarClient:
                     sleep(self._retry_delay_seconds)
                     continue
                 break
+        if settings.browser_fetch_enabled:
+            try:
+                return self.fetch_url_with_browser(url)
+            except BrowserFetchError as browser_error:
+                last_error = browser_error
         raise KufarNetworkError(f"Kufar request failed: {url}") from last_error
+
+    def fetch_url_with_browser(self, url: str) -> str:
+        """Fetch a URL through the configured browser fallback."""
+        if url.startswith("/"):
+            url = f"{self._base_url}{url}"
+        logger.info("source_browser_fetch_started source=kufar url=%s", url)
+        return browser_fetcher.fetch_html(url)
 
     def _url(self, path: str, params: dict[str, str]) -> str:
         """Build an absolute URL for a Kufar path and query dictionary."""
@@ -211,3 +247,13 @@ def kufar_params(request: SearchRequest) -> dict[str, str]:
 def elapsed_ms(started_at: float) -> int:
     """Return elapsed milliseconds from a perf-counter timestamp."""
     return int((perf_counter() - started_at) * 1000)
+
+
+def should_retry_empty_result(result) -> bool:
+    """Return whether an empty search result should be retried in a browser."""
+    return (
+        settings.browser_fetch_enabled
+        and settings.browser_fetch_fallback_on_empty
+        and bool(result.total)
+        and not result.listings
+    )

@@ -9,6 +9,8 @@ from time import perf_counter, sleep
 import httpx
 
 from apartmentfinder.domain.models import Listing, SearchRequest
+from apartmentfinder.infrastructure import browser_fetcher
+from apartmentfinder.infrastructure.browser_fetcher import BrowserFetchError
 from apartmentfinder.infrastructure.config import settings
 from apartmentfinder.infrastructure.sources.realt.parser import (
     parse_realt_detail_page,
@@ -88,11 +90,7 @@ class RealtClient:
                 page_number + 1,
                 next_url,
             )
-            result = parse_realt_search_page(
-                self.fetch_url(next_url),
-                base_url=self._base_url,
-                property_type=request.property_type,
-            )
+            result = self.search_page(next_url, request.property_type)
             logger.debug(
                 "source_page_parsed source=realt page=%s count=%s total=%s "
                 "has_next=%s",
@@ -113,6 +111,43 @@ class RealtClient:
             listing,
             base_url=self._base_url,
         )
+
+    def search_page(self, url: str, property_type: str):
+        """Fetch and parse one Realt search page."""
+        html = self.fetch_url(url)
+        try:
+            result = parse_realt_search_page(
+                html,
+                base_url=self._base_url,
+                property_type=property_type,
+            )
+        except Exception:
+            if not settings.browser_fetch_enabled:
+                raise
+            logger.warning("source_parse_failed_using_browser source=realt url=%s", url)
+            try:
+                result = parse_realt_search_page(
+                    self.fetch_url_with_browser(url),
+                    base_url=self._base_url,
+                    property_type=property_type,
+                )
+            except BrowserFetchError as error:
+                raise RealtNetworkError(f"Realt request failed: {url}") from error
+        if should_retry_empty_result(result):
+            logger.warning(
+                "source_parse_empty_using_browser source=realt total=%s url=%s",
+                result.total,
+                url,
+            )
+            try:
+                return parse_realt_search_page(
+                    self.fetch_url_with_browser(url),
+                    base_url=self._base_url,
+                    property_type=property_type,
+                )
+            except BrowserFetchError as error:
+                raise RealtNetworkError(f"Realt request failed: {url}") from error
+        return result
 
     def fetch_url(self, url: str) -> str:
         """Fetch an absolute or site-relative URL and return response text."""
@@ -162,7 +197,19 @@ class RealtClient:
                     sleep(self._retry_delay_seconds)
                     continue
                 break
+        if settings.browser_fetch_enabled:
+            try:
+                return self.fetch_url_with_browser(url)
+            except BrowserFetchError as browser_error:
+                last_error = browser_error
         raise RealtNetworkError(f"Realt request failed: {url}") from last_error
+
+    def fetch_url_with_browser(self, url: str) -> str:
+        """Fetch a URL through the configured browser fallback."""
+        if url.startswith("/"):
+            url = f"{self._base_url}{url}"
+        logger.info("source_browser_fetch_started source=realt url=%s", url)
+        return browser_fetcher.fetch_html(url)
 
     def _url(self, path: str, _params: dict[str, str]) -> str:
         """Build an absolute URL for a Realt path."""
@@ -172,3 +219,13 @@ class RealtClient:
 def elapsed_ms(started_at: float) -> int:
     """Return elapsed milliseconds from a perf-counter timestamp."""
     return int((perf_counter() - started_at) * 1000)
+
+
+def should_retry_empty_result(result) -> bool:
+    """Return whether an empty search result should be retried in a browser."""
+    return (
+        settings.browser_fetch_enabled
+        and settings.browser_fetch_fallback_on_empty
+        and bool(result.total)
+        and not result.listings
+    )

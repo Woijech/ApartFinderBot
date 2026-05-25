@@ -8,6 +8,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      cloakbrowser:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloakbrowser:
+    image: cloakhq/cloakbrowser
+    command: cloakserve
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   postgres:

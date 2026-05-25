@@ -75,3 +75,26 @@ def test_settings_accepts_log_level_values() -> None:
 def test_settings_rejects_invalid_log_level() -> None:
     with pytest.raises(ValidationError, match="log_level must be"):
         Settings(log_level="verbose", _env_file=None)
+
+
+def test_settings_parses_browser_fetch_bool_from_string() -> None:
+    settings = Settings(browser_fetch_enabled="true", _env_file=None)
+
+    assert settings.browser_fetch_enabled is True
+
+
+def test_settings_rejects_invalid_browser_fetch_timeout() -> None:
+    with pytest.raises(ValidationError):
+        Settings(browser_fetch_timeout_seconds=0, _env_file=None)
+
+
+def test_settings_parses_empty_browser_fingerprint_seed_as_none() -> None:
+    settings = Settings(browser_fetch_fingerprint_seed="", _env_file=None)
+
+    assert settings.browser_fetch_fingerprint_seed is None
+
+
+def test_settings_uses_default_browser_fetch_cdp_url() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.browser_fetch_cdp_url == "http://cloakbrowser:9222"
