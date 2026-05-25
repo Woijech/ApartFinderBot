@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     request_retry_delay_seconds: float = Field(default=2, ge=0)
     log_level: str = "INFO"
     user_agent: str = "ApartmentFinder/0.1 (+local research parser)"
-    http_proxy: str | None = None
     telegram_bot_token: SecretStr | None = Field(
         default=None,
         validation_alias="TELEGRAM_BOT_TOKEN",
@@ -97,24 +96,6 @@ class Settings(BaseSettings):
         if normalized not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
             raise ValueError("log_level must be DEBUG, INFO, WARNING, or ERROR")
         return normalized
-
-    @field_validator("http_proxy", mode="before")
-    @classmethod
-    def empty_http_proxy_to_none(cls, value: object) -> object:
-        """Allow disabling proxy support with an empty env value."""
-        if value == "":
-            return None
-        return value
-
-    @field_validator("http_proxy")
-    @classmethod
-    def validate_http_proxy(cls, value: str | None) -> str | None:
-        """Validate the optional HTTP proxy URL used for geographic testing."""
-        if value is None:
-            return None
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("http_proxy must start with http:// or https://")
-        return value
 
     @field_validator("browser_fetch_cdp_url")
     @classmethod

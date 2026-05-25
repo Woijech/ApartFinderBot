@@ -37,15 +37,12 @@ class RealtClient:
         timeout_seconds: float = settings.timeout_seconds,
         retries: int = settings.request_retries,
         retry_delay_seconds: float = settings.request_retry_delay_seconds,
-        proxy_url: str | None = settings.http_proxy,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
         self._retries = max(retries, 0)
         self._retry_delay_seconds = max(retry_delay_seconds, 0)
-        self._proxy_url = proxy_url
         self._client = httpx.Client(
-            proxy=proxy_url,
             timeout=httpx.Timeout(
                 timeout_seconds,
                 connect=timeout_seconds,
@@ -158,11 +155,10 @@ class RealtClient:
             started_at = perf_counter()
             logger.debug(
                 "source_http_request_started source=realt attempt=%s url=%s "
-                "timeout_seconds=%s proxy_enabled=%s",
+                "timeout_seconds=%s",
                 attempt + 1,
                 url,
                 self._timeout_seconds,
-                self._proxy_url is not None,
             )
             try:
                 response = self._client.get(url)

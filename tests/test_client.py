@@ -54,12 +54,6 @@ def test_client_wraps_forbidden_status_as_network_error() -> None:
         client.fetch_url("https://example.test/status/403")
 
 
-def test_client_accepts_explicit_proxy_url() -> None:
-    client = KufarClient(proxy_url="http://127.0.0.1:8080")
-
-    assert client._proxy_url == "http://127.0.0.1:8080"
-
-
 def test_client_uses_browser_fallback_after_forbidden_status(monkeypatch) -> None:
     client = KufarClient(retries=0)
     client._client = httpx.Client(

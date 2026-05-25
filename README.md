@@ -80,7 +80,6 @@ APARTMENTFINDER_BOT_FETCH_RETRIES=1
 APARTMENTFINDER_BOT_FETCH_RETRY_DELAY_SECONDS=1
 APARTMENTFINDER_BOT_DISPLAY_TIMEZONE=Europe/Minsk
 APARTMENTFINDER_ALLOWED_CHAT_IDS=
-APARTMENTFINDER_HTTP_PROXY=
 APARTMENTFINDER_LOG_LEVEL=INFO
 APARTMENTFINDER_BROWSER_FETCH_ENABLED=false
 APARTMENTFINDER_BROWSER_FETCH_CDP_URL=http://cloakbrowser:9222
@@ -138,18 +137,9 @@ docker compose restart bot
 
 Debug logs include source checks, HTTP statuses, response times, parsed listing
 counts, filter rejection reasons, and notification counts. Secrets such as the
-Telegram token, database password, proxy credentials, and full HTML responses
-are not logged.
+Telegram token, database password, and full HTML responses are not logged.
 
-For geographic availability checks through your own proxy or gateway, set one
-explicit proxy URL:
-
-```env
-APARTMENTFINDER_HTTP_PROXY=http://user:password@host:port
-```
-
-Leave it empty to connect directly from the server. After changing `.env`,
-rebuild the bot container:
+After changing `.env`, rebuild the bot container:
 
 ```bash
 docker compose up -d --build
