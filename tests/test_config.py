@@ -4,12 +4,6 @@ from pydantic import ValidationError
 from apartmentfinder.infrastructure.config import Settings
 
 
-def test_settings_parses_preview_bool_from_string() -> None:
-    settings = Settings(bot_enable_preview="true", _env_file=None)
-
-    assert settings.bot_enable_preview is True
-
-
 def test_settings_keeps_telegram_token_secret() -> None:
     settings = Settings(telegram_bot_token="123:secret-token", _env_file=None)
 

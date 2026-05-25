@@ -42,7 +42,7 @@ from apartmentfinder.application.source_registry import (
     enrich_listing_details,
     fetch_from_sources,
 )
-from apartmentfinder.domain.models import Listing, ListingImage, SearchRequest
+from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.config import settings
 from apartmentfinder.infrastructure.persistence.storage import BotStorage, UserProfile
 from apartmentfinder.infrastructure.source_registry import (
@@ -183,20 +183,6 @@ async def show_status(message: Message) -> None:
         reply_markup=main_menu_keyboard(),
         disable_web_page_preview=True,
     )
-
-
-@router.message(Command("preview"))
-async def preview_listing(message: Message, bot: Bot) -> None:
-    """Send a local fake listing so developers can inspect Telegram formatting."""
-    if not settings.bot_enable_preview:
-        await message.answer(
-            "🧪 Preview-режим выключен.\n\n"
-            "Для локального теста добавь в .env:\n"
-            "<code>APARTMENTFINDER_BOT_ENABLE_PREVIEW=true</code>"
-        )
-        return
-    await message.answer("🧪 Отправляю пример уведомления без запроса к сайтам.")
-    await send_listing(bot, message.chat.id, build_preview_listing())
 
 
 @router.message(F.text)
@@ -773,29 +759,6 @@ def profile_lock(chat_id: int) -> asyncio.Lock:
     return lock
 
 
-def build_preview_listing() -> Listing:
-    """Build a stable fake listing for Telegram preview mode."""
-    return Listing(
-        ad_id=0,
-        title="Сдам комнату рядом с метро",
-        url="https://re.kufar.by/vi/preview",
-        price_usd=180,
-        address="Притыцкого ул, 77, Минск",
-        rooms="1",
-        area_m2=17,
-        floor="5",
-        total_floors="9",
-        metro=["Каменная Горка"],
-        description=(
-            "Светлая комната в аккуратной квартире. Есть кровать, рабочий стол, "
-            "шкаф, стиральная машина и быстрый интернет. До метро несколько "
-            "минут пешком. Это тестовое уведомление, оно не приходит с сайтов."
-        ),
-        published_at=datetime(2026, 5, 7, 20, 23, tzinfo=UTC),
-        images=[ListingImage(gallery_url=settings.bot_preview_image_url)],
-    )
-
-
 async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
     """Send one listing from the background notifier."""
     presentation = build_listing_presentation(
@@ -1269,8 +1232,7 @@ def status_text(chat_id: int) -> str:
         f"📌 Поисков: <b>{len(subscriptions)}</b>\n"
         f"🔔 Активных: <b>{len(enabled)}</b>\n"
         f"⏱ Интервал проверки: <b>{settings.bot_poll_interval_seconds:g} сек.</b>\n"
-        f"🖼 Фото в уведомлении: <b>{settings.bot_max_images}</b>\n"
-        f"🧪 Preview: <b>{'включён' if settings.bot_enable_preview else 'выключен'}</b>"
+        f"🖼 Фото в уведомлении: <b>{settings.bot_max_images}</b>"
     )
 
 

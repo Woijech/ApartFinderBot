@@ -6,7 +6,6 @@ from apartmentfinder.application.monitoring import listings_after_watch_start
 from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.persistence.storage import UserProfile
 from apartmentfinder.interfaces.telegram.bot import (
-    build_preview_listing,
     parse_keywords,
     parse_price_range_text,
 )
@@ -64,16 +63,6 @@ def test_listings_after_watch_start_ignores_equal_timestamp() -> None:
     )
 
     assert listings_after_watch_start(profile, [listing]) == []
-
-
-def test_build_preview_listing_has_stable_display_data() -> None:
-    listing = build_preview_listing()
-
-    assert listing.ad_id == 0
-    assert listing.price_usd == 180
-    assert listing.description
-    assert listing.images
-    assert "preview" in listing.url
 
 
 def test_listing_matches_search_filters_uses_keywords_and_exclusions() -> None:

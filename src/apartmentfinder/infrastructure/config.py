@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     bot_fetch_retries: int = Field(default=1, ge=0)
     bot_fetch_retry_delay_seconds: float = Field(default=1, ge=0)
     bot_display_timezone: str = "Europe/Minsk"
-    bot_enable_preview: bool = False
-    bot_preview_image_url: str = (
-        "https://placehold.co/1200x800/png?text=ApartmentFinder+Preview"
-    )
     allowed_chat_ids: str = ""
     bot_max_pages: int = Field(default=1, ge=1)
     bot_page_delay_seconds: float = Field(default=1, ge=0)
@@ -65,7 +61,6 @@ class Settings(BaseSettings):
         "user_agent",
         "database_url",
         "bot_display_timezone",
-        "bot_preview_image_url",
         "browser_fetch_cdp_url",
         "browser_fetch_wait_until",
     )

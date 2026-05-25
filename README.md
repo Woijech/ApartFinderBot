@@ -42,13 +42,6 @@ Current bot filters:
 - notifications include gallery photos when a source provides them
 - full descriptions are loaded from listing detail pages before sending
 
-For local UI testing without waiting for a real listing, enable preview mode in
-`.env`, restart the bot, and send `/preview` in Telegram:
-
-```env
-APARTMENTFINDER_BOT_ENABLE_PREVIEW=true
-```
-
 ## Architecture
 
 The project is organized around source-neutral application rules:
@@ -86,7 +79,6 @@ APARTMENTFINDER_BOT_FETCH_TIMEOUT_SECONDS=8
 APARTMENTFINDER_BOT_FETCH_RETRIES=1
 APARTMENTFINDER_BOT_FETCH_RETRY_DELAY_SECONDS=1
 APARTMENTFINDER_BOT_DISPLAY_TIMEZONE=Europe/Minsk
-APARTMENTFINDER_BOT_ENABLE_PREVIEW=false
 APARTMENTFINDER_ALLOWED_CHAT_IDS=
 APARTMENTFINDER_HTTP_PROXY=
 APARTMENTFINDER_LOG_LEVEL=INFO
