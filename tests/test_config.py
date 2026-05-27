@@ -71,13 +71,3 @@ def test_settings_rejects_invalid_browser_fetch_timeout() -> None:
         Settings(browser_fetch_timeout_seconds=0, _env_file=None)
 
 
-def test_settings_parses_empty_browser_fingerprint_seed_as_none() -> None:
-    settings = Settings(browser_fetch_fingerprint_seed="", _env_file=None)
-
-    assert settings.browser_fetch_fingerprint_seed is None
-
-
-def test_settings_uses_default_browser_fetch_cdp_url() -> None:
-    settings = Settings(_env_file=None)
-
-    assert settings.browser_fetch_cdp_url == "http://cloakbrowser:9222"

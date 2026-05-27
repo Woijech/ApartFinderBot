@@ -82,11 +82,9 @@ APARTMENTFINDER_BOT_DISPLAY_TIMEZONE=Europe/Minsk
 APARTMENTFINDER_ALLOWED_CHAT_IDS=
 APARTMENTFINDER_LOG_LEVEL=INFO
 APARTMENTFINDER_BROWSER_FETCH_ENABLED=false
-APARTMENTFINDER_BROWSER_FETCH_CDP_URL=http://cloakbrowser:9222
 APARTMENTFINDER_BROWSER_FETCH_TIMEOUT_SECONDS=20
 APARTMENTFINDER_BROWSER_FETCH_WAIT_UNTIL=networkidle
 APARTMENTFINDER_BROWSER_FETCH_FALLBACK_ON_EMPTY=true
-APARTMENTFINDER_BROWSER_FETCH_FINGERPRINT_SEED=
 ```
 
 Tables:
@@ -148,18 +146,16 @@ docker compose logs -f bot
 
 ### CloakBrowser fallback
 
-The Docker stack includes an optional `cloakbrowser` sidecar using the official
-`cloakhq/cloakbrowser` image in `cloakserve` mode. It is disabled by default in
-the bot and is used only as a fallback when normal HTTP fetching fails or a
-source page looks suspiciously empty:
+The bot can optionally use the CloakBrowser Python package as a browser-backed
+fallback when normal HTTP fetching fails or a source page looks suspiciously
+empty. It is disabled by default:
 
 ```env
 APARTMENTFINDER_BROWSER_FETCH_ENABLED=true
 ```
 
-The bot connects to CloakBrowser over CDP at
-`APARTMENTFINDER_BROWSER_FETCH_CDP_URL`, which defaults to
-`http://cloakbrowser:9222` inside the Docker network. Do not publish CDP port
-`9222` to the public internet: CDP gives full browser control. CloakBrowser's
-official Docker/CDP usage is documented at
+The Docker stack stores CloakBrowser's downloaded browser files in the
+`cloakbrowser_cache` volume, so the first browser fallback may take longer while
+Chromium is downloaded, but later deploys can reuse the cached binary.
+CloakBrowser's Python API and install behavior are documented at
 <https://github.com/CloakHQ/CloakBrowser>.

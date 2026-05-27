@@ -5,22 +5,12 @@ services:
       - .env
     environment:
       APARTMENTFINDER_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-apartmentfinder}:${POSTGRES_PASSWORD:-apartmentfinder}@postgres:5432/${POSTGRES_DB:-apartmentfinder}
+      CLOAKBROWSER_CACHE_DIR: /root/.cache/cloakbrowser
     depends_on:
       postgres:
         condition: service_healthy
-      cloakbrowser:
-        condition: service_healthy
-    restart: unless-stopped
-
-  cloakbrowser:
-    image: cloakhq/cloakbrowser
-    command: cloakserve
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9222/json/version"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    volumes:
+      - cloakbrowser_cache:/root/.cache/cloakbrowser
     restart: unless-stopped
 
   postgres:
@@ -41,4 +31,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  cloakbrowser_cache:
   postgres_data:
