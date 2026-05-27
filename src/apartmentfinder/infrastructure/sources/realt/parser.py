@@ -8,6 +8,7 @@ instead of brittle generated CSS class names.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from dataclasses import replace
@@ -55,6 +56,11 @@ def parse_realt_search_page(
 ) -> SearchResult:
     """Parse a Realt search page into normalized listing cards."""
     soup = BeautifulSoup(html, "html.parser")
+    json_listings = _parse_next_data_listings(
+        soup,
+        base_url=base_url,
+        property_type=property_type,
+    )
     listings = _parse_dom_cards(
         soup,
         base_url=base_url,
@@ -77,7 +83,12 @@ def parse_realt_search_page(
         listings.extend(
             listing for listing in text_listings if listing.ad_id not in seen_ids
         )
-    total = _parse_total(soup)
+    if json_listings:
+        json_ids = {listing.ad_id for listing in json_listings}
+        listings = json_listings + [
+            listing for listing in listings if listing.ad_id not in json_ids
+        ]
+    total = _parse_next_data_total(soup) or _parse_total(soup)
     if total and not listings:
         logger.warning(
             "source_parse_suspicious source=realt total=%s parsed=0",
@@ -89,6 +100,119 @@ def parse_realt_search_page(
         next_cursor=_parse_next_page(soup, base_url),
         search_id=None,
     )
+
+
+def _parse_next_data_listings(
+    soup: BeautifulSoup,
+    *,
+    base_url: str,
+    property_type: str,
+) -> list[Listing]:
+    """Parse server-side Next.js listing objects before using DOM fallbacks."""
+    data = _extract_next_data(soup)
+    if data is None:
+        return []
+    objects = _next_data_listing_objects(data)
+    return [
+        _parse_next_data_listing(
+            item,
+            base_url=base_url,
+            property_type=property_type,
+        )
+        for item in objects
+    ]
+
+
+def _parse_next_data_listing(
+    item: dict,
+    *,
+    base_url: str,
+    property_type: str,
+) -> Listing:
+    """Normalize one Realt object from the Next.js payload."""
+    ad_id = int(item["code"])
+    description = item.get("description") or item.get("headline")
+    return Listing(
+        ad_id=ad_id,
+        title=item.get("headline") or _json_listing_title(item, property_type),
+        url=_fallback_listing_url(ad_id, base_url, property_type),
+        source=REALT_SOURCE,
+        price_byn=_price_rate(item, "933"),
+        price_usd=_price_rate(item, "840"),
+        currency="USD",
+        address=item.get("address") or _json_address(item),
+        rooms=_json_rooms(item, property_type),
+        area_m2=_json_float(item.get("areaLiving") or item.get("areaTotal")),
+        floor=_json_string(item.get("storey")),
+        total_floors=_json_string(item.get("storeys")),
+        metro=_json_metro(item),
+        description=_normalize_text(description),
+        published_at=_datetime_or_none(item.get("createdAt")),
+        company_ad=bool(item.get("agencyName") or item.get("companyName")),
+        images=_json_images(item),
+        raw_parameters={"source": REALT_SOURCE, "parser": "next_data"},
+    )
+
+
+def _extract_next_data(soup: BeautifulSoup) -> dict | None:
+    """Extract the embedded Next.js JSON payload when Realt provides it."""
+    script = soup.find("script", id="__NEXT_DATA__")
+    if script is None or not script.string:
+        return None
+    try:
+        return json.loads(script.string)
+    except json.JSONDecodeError:
+        return None
+
+
+def _next_data_listing_objects(data: dict) -> list[dict]:
+    """Return likely Realt listing objects from a nested Next.js payload."""
+    result = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("__typename") == "ObjectData" and value.get("code"):
+                result.append(value)
+                return
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(data)
+    return result
+
+
+def _parse_next_data_total(soup: BeautifulSoup) -> int | None:
+    """Return total count from Next.js data when available."""
+    data = _extract_next_data(soup)
+    if data is None:
+        return None
+
+    def walk(value: object) -> int | None:
+        if isinstance(value, dict):
+            total = value.get("totalCount")
+            if isinstance(total, int):
+                return total
+            pagination = value.get("pagination")
+            if isinstance(pagination, dict) and isinstance(
+                pagination.get("totalCount"),
+                int,
+            ):
+                return pagination["totalCount"]
+            for child in value.values():
+                found = walk(child)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for child in value:
+                found = walk(child)
+                if found is not None:
+                    return found
+        return None
+
+    return walk(data)
 
 
 def _parse_dom_cards(
@@ -262,7 +386,7 @@ def _parse_card(
         floor=specs.get("floor"),
         total_floors=specs.get("total"),
         metro=_metro_lines(lines),
-        description=_description(lines),
+        description=_card_description(card, lines),
         published_at=_published_at(text, now),
         company_ad="Агентство" in text,
         images=_card_images(card, base_url),
@@ -301,6 +425,90 @@ def _parse_text_block(
         images=[],
         raw_parameters={"source": REALT_SOURCE, "parser": "text_block"},
     )
+
+
+def _json_listing_title(item: dict, property_type: str) -> str:
+    """Build a fallback title from a Realt object."""
+    address = item.get("address") or _json_address(item)
+    if property_type == "room":
+        return f"Комната, {address}" if address else "Комната"
+    return f"Квартира, {address}" if address else "Квартира"
+
+
+def _json_address(item: dict) -> str | None:
+    """Build an address from separate Realt object fields."""
+    parts = [
+        item.get("townName"),
+        item.get("streetName"),
+        item.get("houseNumber"),
+        item.get("buildingNumber"),
+    ]
+    text = " ".join(str(part) for part in parts if part not in (None, ""))
+    return text or None
+
+
+def _json_rooms(item: dict, property_type: str) -> str | None:
+    """Return room count from a Realt object."""
+    rooms = item.get("rooms")
+    if rooms not in (None, ""):
+        return str(rooms)
+    if property_type == "room":
+        return "1"
+    return None
+
+
+def _json_metro(item: dict) -> list[str]:
+    """Return metro station data from a Realt object."""
+    station = item.get("metroStationName")
+    if not station:
+        return []
+    metro_time = item.get("metroTime")
+    if metro_time:
+        return [f"{station} {metro_time} минут"]
+    return [str(station)]
+
+
+def _json_images(item: dict) -> list[ListingImage]:
+    """Return image URLs from a Realt object."""
+    images = item.get("images")
+    if not isinstance(images, list):
+        return []
+    return [
+        ListingImage(gallery_url=str(url))
+        for url in images
+        if isinstance(url, str) and url
+    ]
+
+
+def _price_rate(item: dict, currency_code: str) -> float | None:
+    """Return a normal money value from Realt priceRates."""
+    price_rates = item.get("priceRates")
+    if not isinstance(price_rates, dict):
+        return None
+    value = price_rates.get(currency_code)
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _json_float(value: object) -> float | None:
+    """Parse a float from a JSON scalar."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _json_string(value: object) -> str | None:
+    """Convert a JSON scalar into optional text."""
+    if value in (None, ""):
+        return None
+    return str(value)
 
 
 def _parse_specs(text: str, property_type: str) -> dict[str, str | None]:
@@ -398,6 +606,26 @@ def _description(lines: list[str]) -> str | None:
             continue
         result.append(line)
     return " ".join(result).strip() or None
+
+
+def _card_description(card: Tag, lines: list[str]) -> str | None:
+    """Return the dedicated Realt card note before falling back to text cleanup."""
+    description = _clamped_description(card)
+    if description:
+        return description
+    return _description(lines)
+
+
+def _clamped_description(card: Tag) -> str | None:
+    """Extract the visible two-line note block from Realt listing cards."""
+    for node in card.find_all(True):
+        classes = {str(item) for item in node.get("class", [])}
+        if not {"line-clamp-2", "h-12"}.issubset(classes):
+            continue
+        text = node.get_text(" ", strip=True)
+        if text:
+            return _normalize_text(text)
+    return None
 
 
 def _published_at(text: str, now: datetime | None) -> datetime | None:
@@ -517,6 +745,21 @@ def _float_or_none(value: str | None) -> float | None:
     if not value:
         return None
     return float(value.replace(",", "."))
+
+
+def _datetime_or_none(value: str | None) -> datetime | None:
+    """Parse Realt ISO datetime strings."""
+    if not value:
+        return None
+    return datetime.fromisoformat(value).astimezone(UTC)
+
+
+def _normalize_text(value: object) -> str | None:
+    """Normalize whitespace in display text."""
+    if value in (None, ""):
+        return None
+    text = " ".join(str(value).split())
+    return text or None
 
 
 def _first_matching_line(lines: list[str], needles: tuple[str, ...]) -> str | None:

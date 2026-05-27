@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 from apartmentfinder.infrastructure.sources.realt.parser import (
@@ -118,6 +119,94 @@ def test_parse_realt_prices_with_non_breaking_spaces() -> None:
 
     assert result.listings[0].price_byn == 2795
     assert result.listings[0].price_usd == 1000
+
+
+def test_parse_realt_description_from_clamped_note_block() -> None:
+    html = """
+    <html><body>
+      <article>
+        <a href="/rent/room-for-long/object/4119308/">Койка-Место</a>
+        <div>451 р./мес.</div>
+        <div>≈ 160 $/мес.</div>
+        <div>Комната 30 м² 5/9 этаж</div>
+        <div>г. Минск, ул. Притыцкого, 10</div>
+        <div>Кунцевщина 5 минут</div>
+        <div class="text-basic-900 overflow-hidden
+                    text-clamper-module__BRgsCG__wrapper line-clamp-2 h-12">
+          <div>
+            Сдаётся Койка-Место в комнате,для Мужчин,Белорусам.
+            Комната 30 кв.м на 5 человека.
+          </div>
+        </div>
+        <span>7 часов назад ID 4119308</span>
+      </article>
+    </body></html>
+    """
+
+    result = parse_realt_search_page(html, property_type="room")
+
+    assert result.listings[0].description == (
+        "Сдаётся Койка-Место в комнате,для Мужчин,Белорусам. "
+        "Комната 30 кв.м на 5 человека."
+    )
+
+
+def test_parse_realt_next_data_listings_prefer_headline_description() -> None:
+    payload = {
+        "props": {
+            "pageProps": {
+                "objects": [
+                    {
+                        "__typename": "ObjectData",
+                        "code": 4021321,
+                        "headline": (
+                            "Сдаётся Койка-Место в комнате,для Мужчин,Белорусам."
+                        ),
+                        "description": None,
+                        "createdAt": "2026-05-22T13:41:39+03:00",
+                        "priceRates": {"840": 130, "933": 360},
+                        "areaLiving": 30,
+                        "storey": 1,
+                        "storeys": 9,
+                        "address": "Минск Притыцкого ул. 10",
+                        "metroStationName": "Кунцевщина",
+                        "metroTime": 5,
+                        "images": ["https://cdn.realt.by/img/55/room"],
+                    },
+                    {
+                        "__typename": "ObjectData",
+                        "code": 4132502,
+                        "headline": "Короткий заголовок",
+                        "description": "Полное описание из JSON.",
+                        "createdAt": "2026-05-25T10:00:00+03:00",
+                        "priceRates": {"840": 0, "933": 0},
+                        "areaTotal": 60,
+                    },
+                ],
+                "pagination": {"totalCount": 102},
+            }
+        }
+    }
+    html = (
+        '<html><body><script id="__NEXT_DATA__" type="application/json">'
+        f"{json.dumps(payload)}"
+        "</script></body></html>"
+    )
+
+    result = parse_realt_search_page(html, property_type="room")
+
+    assert result.total == 102
+    assert [listing.ad_id for listing in result.listings] == [4021321, 4132502]
+    first = result.listings[0]
+    assert first.description == "Сдаётся Койка-Место в комнате,для Мужчин,Белорусам."
+    assert first.price_usd == 130
+    assert first.price_byn == 360
+    assert first.area_m2 == 30
+    assert first.floor == "1"
+    assert first.total_floors == "9"
+    assert first.metro == ["Кунцевщина 5 минут"]
+    assert first.images[0].gallery_url == "https://cdn.realt.by/img/55/room"
+    assert result.listings[1].description == "Полное описание из JSON."
 
 
 def test_parse_realt_live_text_blocks_without_card_dom() -> None:
