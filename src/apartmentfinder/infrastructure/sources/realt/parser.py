@@ -509,7 +509,7 @@ def _money_from_match(match: re.Match[str] | None) -> float | None:
     """Parse a money amount from a regex match."""
     if not match:
         return None
-    return float(match.group(1).replace(" ", ""))
+    return float("".join(match.group(1).split()))
 
 
 def _float_or_none(value: str | None) -> float | None:

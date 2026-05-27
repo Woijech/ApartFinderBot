@@ -100,6 +100,26 @@ def test_parse_realt_flat_search_page() -> None:
     assert listing.published_at == datetime(2026, 5, 7, 21, 0, tzinfo=UTC)
 
 
+def test_parse_realt_prices_with_non_breaking_spaces() -> None:
+    html = """
+    <html><body>
+      <article>
+        <a href="/rent/flat-for-long/object/4089354/">Студия</a>
+        <div>2\xa0795 р./мес.</div>
+        <div>≈ 1\xa0000\xa0$/мес.</div>
+        <div>1 комн.30 м² 25/25 этаж</div>
+        <div>г. Минск, ул. Брилевская, 37</div>
+        <span>08.05.2026 ID 4089354</span>
+      </article>
+    </body></html>
+    """
+
+    result = parse_realt_search_page(html, property_type="apartment")
+
+    assert result.listings[0].price_byn == 2795
+    assert result.listings[0].price_usd == 1000
+
+
 def test_parse_realt_live_text_blocks_without_card_dom() -> None:
     result = parse_realt_search_page(
         LIVE_TEXT_HTML,
