@@ -198,6 +198,7 @@ def test_parse_realt_next_data_listings_prefer_headline_description() -> None:
     assert result.total == 102
     assert [listing.ad_id for listing in result.listings] == [4021321, 4132502]
     first = result.listings[0]
+    assert first.title == "Комната, Минск Притыцкого ул. 10"
     assert first.description == "Сдаётся Койка-Место в комнате,для Мужчин,Белорусам."
     assert first.price_usd == 130
     assert first.price_byn == 360
@@ -206,6 +207,7 @@ def test_parse_realt_next_data_listings_prefer_headline_description() -> None:
     assert first.total_floors == "9"
     assert first.metro == ["Кунцевщина 5 минут"]
     assert first.images[0].gallery_url == "https://cdn.realt.by/img/55/room"
+    assert result.listings[1].title == "Комната"
     assert result.listings[1].description == "Полное описание из JSON."
 
 

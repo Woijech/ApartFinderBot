@@ -134,7 +134,7 @@ def _parse_next_data_listing(
     description = item.get("description") or item.get("headline")
     return Listing(
         ad_id=ad_id,
-        title=item.get("headline") or _json_listing_title(item, property_type),
+        title=_json_listing_title(item, property_type),
         url=_fallback_listing_url(ad_id, base_url, property_type),
         source=REALT_SOURCE,
         price_byn=_price_rate(item, "933"),
