@@ -6,6 +6,7 @@ from apartmentfinder.application.monitoring import listings_after_watch_start
 from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.persistence.storage import UserProfile
 from apartmentfinder.interfaces.telegram.bot import (
+    listing_history_url,
     parse_keywords,
     parse_price_range_text,
 )
@@ -147,3 +148,18 @@ def test_parse_price_range_text_accepts_common_forms() -> None:
     assert parse_price_range_text("150-250") == (150, 250)
     assert parse_price_range_text("до 300") == (None, 300)
     assert parse_price_range_text("500") == (None, 500)
+
+
+def test_listing_history_url_uses_public_realt_object_paths() -> None:
+    room_request = SearchRequest(property_type="room")
+    flat_request = SearchRequest(property_type="apartment")
+
+    assert listing_history_url("realt", 4146299, room_request) == (
+        "https://realt.by/rent-rooms-for-long/object/4146299/"
+    )
+    assert listing_history_url("realt", 4137638, flat_request) == (
+        "https://realt.by/rent-flat-for-long/object/4137638/"
+    )
+    assert listing_history_url("kufar", 123, flat_request) == (
+        "https://re.kufar.by/vi/123"
+    )

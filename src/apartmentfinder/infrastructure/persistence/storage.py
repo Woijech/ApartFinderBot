@@ -218,6 +218,21 @@ class BotStorage:
             ).all()
             return [(str(source), int(ad_id)) for source, ad_id in rows]
 
+    def recent_seen_items_for_subscription(
+        self,
+        subscription_id: int,
+        limit: int | None = None,
+    ) -> list[ListingKey]:
+        """Return recent source/id pairs for one saved search."""
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(SeenAdRow.source, SeenAdRow.ad_id)
+                .where(SeenAdRow.subscription_id == subscription_id)
+                .order_by(SeenAdRow.seen_at.desc())
+                .limit(limit or self._max_seen_per_chat)
+            ).all()
+            return [(str(source), int(ad_id)) for source, ad_id in rows]
+
     def mark_seen(self, chat_id: int, ad_ids: list[int]) -> None:
         """Insert seen listing ids using a unique key to prevent duplicates."""
         if not ad_ids:

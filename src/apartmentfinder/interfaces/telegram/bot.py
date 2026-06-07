@@ -109,12 +109,14 @@ CALLBACK_MAIN = "menu:main"
 CALLBACK_SEARCHES = "menu:searches"
 CALLBACK_NEW_SEARCH = "subscription:new"
 CALLBACK_HELP = "menu:help"
+CALLBACK_HISTORY = "menu:history"
 CALLBACK_FILTERS = "menu:filters"
 CALLBACK_TYPE = "filter:type"
 CALLBACK_PRICE = "filter:price"
 CALLBACK_WATCH_ON = "action:watch_on"
 CALLBACK_WATCH_OFF = "action:watch_off"
 CALLBACK_SETTINGS = "action:settings"
+HISTORY_PAGE_SIZE = 6
 
 
 class AccessMiddleware(BaseMiddleware):
@@ -219,7 +221,8 @@ async def text_input(message: Message) -> None:
 async def main_menu(callback: CallbackQuery) -> None:
     """Render the main menu after a user presses back/home."""
     ensure_default_profile(callback.message.chat.id)
-    await callback.message.edit_text(
+    await edit_or_answer(
+        callback.message,
         main_menu_text(callback.message.chat.id),
         reply_markup=main_menu_keyboard(),
         disable_web_page_preview=True,
@@ -255,6 +258,28 @@ async def create_search(callback: CallbackQuery) -> None:
         disable_web_page_preview=True,
     )
     await callback.answer("Поиск создан")
+
+
+@router.callback_query(F.data == CALLBACK_HISTORY)
+async def history_menu(callback: CallbackQuery) -> None:
+    """Show old loaded listings entry point."""
+    ensure_default_profile(callback.message.chat.id)
+    subscriptions = storage.list_subscriptions(callback.message.chat.id)
+    if len(subscriptions) == 1:
+        subscription = subscriptions[0]
+        await callback.message.edit_text(
+            history_text(subscription, 0),
+            reply_markup=history_keyboard(subscription, 0),
+            disable_web_page_preview=True,
+        )
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        history_subscriptions_text(callback.message.chat.id),
+        reply_markup=history_subscriptions_keyboard(callback.message.chat.id),
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == CALLBACK_HELP)
@@ -294,6 +319,15 @@ async def subscription_callback(callback: CallbackQuery) -> None:
         await callback.message.edit_text(
             subscription_filters_text(subscription),
             reply_markup=subscription_filter_keyboard(subscription),
+            disable_web_page_preview=True,
+        )
+        await callback.answer()
+        return
+    if action == "history":
+        page = int(value or "0")
+        await callback.message.edit_text(
+            history_text(subscription, page),
+            reply_markup=history_keyboard(subscription, page),
             disable_web_page_preview=True,
         )
         await callback.answer()
@@ -766,19 +800,46 @@ async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
         max_images=settings.bot_max_images,
     )
     if presentation.image_urls:
+        await bot.send_photo(
+            chat_id,
+            presentation.image_urls[0],
+            caption=presentation.caption,
+            reply_markup=listing_navigation_keyboard(),
+        )
         if len(presentation.image_urls) == 1:
-            await bot.send_photo(
-                chat_id,
-                presentation.image_urls[0],
-                caption=presentation.caption,
-            )
             return
-        await bot.send_media_group(chat_id, media_group_from_presentation(presentation))
+        await bot.send_media_group(
+            chat_id,
+            [InputMediaPhoto(media=url) for url in presentation.image_urls[1:]],
+        )
         return
     await bot.send_message(
         chat_id,
         presentation.caption,
+        reply_markup=listing_navigation_keyboard(),
         disable_web_page_preview=True,
+    )
+
+
+async def edit_or_answer(
+    message: Message,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup,
+    disable_web_page_preview: bool = False,
+) -> None:
+    """Edit text messages and send a new menu for media notifications."""
+    if message.text:
+        await message.edit_text(
+            text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+        return
+    await message.answer(
+        text,
+        reply_markup=reply_markup,
+        disable_web_page_preview=disable_web_page_preview,
     )
 
 
@@ -940,6 +1001,12 @@ def main_menu_keyboard(_profile: UserProfile | None = None) -> InlineKeyboardMar
             ],
             [
                 InlineKeyboardButton(
+                    text="🕘 Старые объявления",
+                    callback_data=CALLBACK_HISTORY,
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="➕ Создать поиск",
                     callback_data=CALLBACK_NEW_SEARCH,
                 )
@@ -972,6 +1039,21 @@ def searches_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def history_subscriptions_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Build search selector for old loaded listings."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=subscription_button_title(subscription),
+                callback_data=f"s:{subscription.id}:history:0",
+            )
+        ]
+        for subscription in storage.list_subscriptions(chat_id)
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ В меню", callback_data=CALLBACK_MAIN)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def subscription_keyboard(subscription: UserProfile) -> InlineKeyboardMarkup:
     """Build controls for one saved search."""
     watch_button = (
@@ -993,6 +1075,12 @@ def subscription_keyboard(subscription: UserProfile) -> InlineKeyboardMarkup:
                     callback_data=f"s:{subscription.id}:filters",
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text="🕘 Старые объявления",
+                    callback_data=f"s:{subscription.id}:history:0",
+                )
+            ],
             [watch_button],
             [
                 InlineKeyboardButton(
@@ -1001,6 +1089,58 @@ def subscription_keyboard(subscription: UserProfile) -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton(text="⬅️ К поискам", callback_data=CALLBACK_SEARCHES)],
+        ]
+    )
+
+
+def history_keyboard(subscription: UserProfile, page: int) -> InlineKeyboardMarkup:
+    """Build paginated navigation for old loaded listings."""
+    items = storage.recent_seen_items_for_subscription(subscription.id)
+    total_pages = max(1, (len(items) + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    rows: list[list[InlineKeyboardButton]] = []
+    nav = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text="⬅️ Новее",
+                callback_data=f"s:{subscription.id}:history:{page - 1}",
+            )
+        )
+    if page < total_pages - 1:
+        nav.append(
+            InlineKeyboardButton(
+                text="Старее ➡️",
+                callback_data=f"s:{subscription.id}:history:{page + 1}",
+            )
+        )
+    if nav:
+        rows.append(nav)
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="⚙️ Настройки поиска",
+                    callback_data=f"s:{subscription.id}:open",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📌 К поискам",
+                    callback_data=CALLBACK_SEARCHES,
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def listing_navigation_keyboard() -> InlineKeyboardMarkup:
+    """Build navigation attached to each sent listing notification."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)]
         ]
     )
 
@@ -1220,6 +1360,71 @@ def subscriptions_text(chat_id: int) -> str:
             f"{subscription_summary(subscription)}"
         )
     return "\n".join(lines)
+
+
+def history_subscriptions_text(chat_id: int) -> str:
+    """Format old listings search selector."""
+    subscriptions = storage.list_subscriptions(chat_id)
+    total = sum(
+        len(storage.recent_seen_items_for_subscription(subscription.id))
+        for subscription in subscriptions
+        if subscription.id is not None
+    )
+    return (
+        "🕘 <b>Старые объявления</b>\n\n"
+        "Здесь лежат объявления, которые бот уже загружал и пометил как увиденные. "
+        "Выбери поиск, чтобы открыть историю с быстрыми ссылками.\n\n"
+        f"📌 Поисков: <b>{len(subscriptions)}</b>\n"
+        f"🔗 Ссылок в истории: <b>{total}</b>"
+    )
+
+
+def history_text(subscription: UserProfile, page: int) -> str:
+    """Format one page of old loaded listings for a saved search."""
+    if subscription.id is None:
+        return "🕘 <b>Старые объявления</b>\n\nИстория пока пуста."
+    items = storage.recent_seen_items_for_subscription(subscription.id)
+    total_pages = max(1, (len(items) + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * HISTORY_PAGE_SIZE
+    page_items = items[start : start + HISTORY_PAGE_SIZE]
+    lines = [
+        f"🕘 <b>Старые объявления: {escape(subscription.title)}</b>",
+        "",
+    ]
+    if not page_items:
+        lines.extend(
+            [
+                "История пока пуста.",
+                "",
+                "Она появится после включения слежения или после первых отправленных "
+                "уведомлений.",
+            ]
+        )
+        return "\n".join(lines)
+    lines.append(f"Страница <b>{page + 1}</b> из <b>{total_pages}</b>")
+    lines.append("")
+    for index, (source, ad_id) in enumerate(page_items, start=start + 1):
+        source_title = {"kufar": "Kufar", "realt": "Realt"}.get(source, source)
+        url = listing_history_url(source, ad_id, subscription.request)
+        lines.append(
+            f"{index}. <a href=\"{escape(url)}\">{escape(source_title)} #{ad_id}</a>"
+        )
+    return "\n".join(lines)
+
+
+def listing_history_url(source: str, ad_id: int, request: SearchRequest) -> str:
+    """Build a public URL from a stored source/id pair."""
+    if source == "realt":
+        target = (
+            "rent-rooms-for-long"
+            if request.property_type == "room"
+            else "rent-flat-for-long"
+        )
+        return f"https://realt.by/{target}/object/{ad_id}/"
+    if source == "kufar":
+        return f"https://re.kufar.by/vi/{ad_id}"
+    return f"https://example.invalid/{source}/{ad_id}"
 
 
 def status_text(chat_id: int) -> str:
