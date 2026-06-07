@@ -10,15 +10,16 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import create_engine, delete, select, text, tuple_
+from sqlalchemy import create_engine, delete, func, select, text, tuple_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from apartmentfinder.domain.models import SearchRequest
+from apartmentfinder.domain.models import Listing, ListingImage, SearchRequest
 from apartmentfinder.infrastructure.persistence.models import (
     Base,
     ChatRow,
+    ListingHistoryRow,
     NotificationLogRow,
     SeenAdRow,
     SubscriptionRow,
@@ -232,6 +233,79 @@ class BotStorage:
                 .limit(limit or self._max_seen_per_chat)
             ).all()
             return [(str(source), int(ad_id)) for source, ad_id in rows]
+
+    def save_listing_history_for_subscription(
+        self,
+        subscription_id: int,
+        listings: list[Listing],
+        limit: int = 50,
+    ) -> None:
+        """Store recent matching listing snapshots for old-listing browsing."""
+        if not listings:
+            return
+        saved_at = datetime.now(UTC)
+        unique_listings = {
+            (listing.source, int(listing.ad_id)): listing for listing in listings
+        }
+        with self._session_factory() as session:
+            for (source, ad_id), listing in unique_listings.items():
+                row = session.scalar(
+                    select(ListingHistoryRow).where(
+                        ListingHistoryRow.subscription_id == subscription_id,
+                        ListingHistoryRow.source == source,
+                        ListingHistoryRow.ad_id == ad_id,
+                    )
+                )
+                listing_json = _listing_to_json(listing)
+                if row is None:
+                    session.add(
+                        ListingHistoryRow(
+                            subscription_id=subscription_id,
+                            source=source,
+                            ad_id=ad_id,
+                            seller_name=listing.seller_name,
+                            listing_json=listing_json,
+                            saved_at=saved_at,
+                        )
+                    )
+                    continue
+                row.seller_name = listing.seller_name
+                row.listing_json = listing_json
+                row.saved_at = saved_at
+            self._prune_listing_history_for_subscription(
+                session,
+                subscription_id,
+                limit,
+            )
+            session.commit()
+
+    def listing_history_count_for_subscription(self, subscription_id: int) -> int:
+        """Return stored listing snapshot count for one saved search."""
+        with self._session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(ListingHistoryRow)
+                    .where(ListingHistoryRow.subscription_id == subscription_id)
+                )
+                or 0
+            )
+
+    def history_listing_for_subscription(
+        self,
+        subscription_id: int,
+        index: int,
+    ) -> Listing | None:
+        """Return one old listing snapshot by newest-first index."""
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(ListingHistoryRow)
+                .where(ListingHistoryRow.subscription_id == subscription_id)
+                .order_by(ListingHistoryRow.saved_at.desc())
+                .offset(max(index, 0))
+                .limit(1)
+            )
+            return _listing_from_json(row.listing_json) if row is not None else None
 
     def mark_seen(self, chat_id: int, ad_ids: list[int]) -> None:
         """Insert seen listing ids using a unique key to prevent duplicates."""
@@ -614,6 +688,24 @@ class BotStorage:
                 )
             )
 
+    def _prune_listing_history_for_subscription(
+        self,
+        session: Session,
+        subscription_id: int,
+        limit: int,
+    ) -> None:
+        """Keep only the newest stored listing snapshots for one search."""
+        stale_ids = session.scalars(
+            select(ListingHistoryRow.id)
+            .where(ListingHistoryRow.subscription_id == subscription_id)
+            .order_by(ListingHistoryRow.saved_at.desc())
+            .offset(max(limit, 0))
+        ).all()
+        if stale_ids:
+            session.execute(
+                delete(ListingHistoryRow).where(ListingHistoryRow.id.in_(stale_ids))
+            )
+
 
 def _create_engine(database_url: str) -> Engine:
     """Create a SQLAlchemy engine for PostgreSQL."""
@@ -636,6 +728,49 @@ def _request_from_json(value: str) -> SearchRequest:
     """Deserialize SearchRequest from JSON stored in the database."""
     data = json.loads(value)
     return SearchRequest(**data)
+
+
+def _listing_to_json(listing: Listing) -> str:
+    """Serialize Listing as compact JSON for history snapshots."""
+    data = asdict(listing)
+    if listing.published_at is not None:
+        data["published_at"] = listing.published_at.isoformat()
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def _listing_from_json(value: str) -> Listing:
+    """Deserialize Listing from history snapshot JSON."""
+    data = json.loads(value)
+    published_at = _datetime_from_db(data.get("published_at"))
+    images = [
+        ListingImage(
+            gallery_url=str(image["gallery_url"]),
+            thumbnail_url=image.get("thumbnail_url"),
+        )
+        for image in data.get("images", [])
+        if image.get("gallery_url")
+    ]
+    return Listing(
+        ad_id=int(data["ad_id"]),
+        title=str(data.get("title") or ""),
+        url=str(data.get("url") or ""),
+        source=str(data.get("source") or "kufar"),
+        price_byn=data.get("price_byn"),
+        price_usd=data.get("price_usd"),
+        currency=data.get("currency"),
+        address=data.get("address"),
+        rooms=data.get("rooms"),
+        area_m2=data.get("area_m2"),
+        floor=data.get("floor"),
+        total_floors=data.get("total_floors"),
+        metro=list(data.get("metro") or []),
+        description=data.get("description"),
+        published_at=published_at,
+        seller_name=data.get("seller_name"),
+        company_ad=bool(data.get("company_ad")),
+        images=images,
+        raw_parameters=dict(data.get("raw_parameters") or {}),
+    )
 
 
 def _unique_listing_keys(listing_keys: list[ListingKey]) -> list[ListingKey]:

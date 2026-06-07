@@ -332,6 +332,15 @@ async def subscription_callback(callback: CallbackQuery) -> None:
         )
         await callback.answer()
         return
+    if action == "old":
+        index = int(value or "0")
+        await callback.message.edit_text(
+            old_listing_text(subscription, index),
+            reply_markup=old_listing_keyboard(subscription, index),
+            disable_web_page_preview=True,
+        )
+        await callback.answer()
+        return
     if action == "delete":
         storage.delete_subscription(callback.message.chat.id, subscription_id)
         await callback.message.edit_text(
@@ -519,6 +528,7 @@ async def enable_subscription_watch(
         return
     profile.enabled = True
     profile.watch_started_at = datetime.now(UTC)
+    save_matching_listing_history(profile, listings)
     mark_subscription_seen(profile, listings)
     storage.update_subscription(profile)
     logger.info(
@@ -624,6 +634,7 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
         for listing in after_watch_start
         if listing_matches_search_filters(listing, profile.request)
     )
+    save_matching_listing_history(profile, fresh_listings)
     unseen_keys = set(
         unseen_items_for_subscription(
             profile,
@@ -747,6 +758,21 @@ def mark_subscription_seen(profile: UserProfile, listings: list[Listing]) -> Non
         return
     storage.mark_seen_items(profile.chat_id, listing_keys)
     profile.seen_ids = storage.recent_seen_ids(profile.chat_id)
+
+
+def save_matching_listing_history(
+    profile: UserProfile,
+    listings: list[Listing],
+) -> None:
+    """Persist the latest matching listing snapshots for old-listing browsing."""
+    if profile.id is None:
+        return
+    matching = [
+        listing
+        for listing in listings
+        if listing_matches_search_filters(listing, profile.request)
+    ]
+    storage.save_listing_history_for_subscription(profile.id, matching, limit=50)
 
 
 def elapsed_ms(started_at: datetime) -> int:
@@ -1095,10 +1121,19 @@ def subscription_keyboard(subscription: UserProfile) -> InlineKeyboardMarkup:
 
 def history_keyboard(subscription: UserProfile, page: int) -> InlineKeyboardMarkup:
     """Build paginated navigation for old loaded listings."""
-    items = storage.recent_seen_items_for_subscription(subscription.id)
-    total_pages = max(1, (len(items) + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
+    total = storage.listing_history_count_for_subscription(subscription.id)
+    total_pages = max(1, (total + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
     rows: list[list[InlineKeyboardButton]] = []
+    if total:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="👁 Просмотр",
+                    callback_data=f"s:{subscription.id}:old:{page * HISTORY_PAGE_SIZE}",
+                )
+            ]
+        )
     nav = []
     if page > 0:
         nav.append(
@@ -1128,6 +1163,44 @@ def history_keyboard(subscription: UserProfile, page: int) -> InlineKeyboardMark
                 InlineKeyboardButton(
                     text="📌 К поискам",
                     callback_data=CALLBACK_SEARCHES,
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def old_listing_keyboard(subscription: UserProfile, index: int) -> InlineKeyboardMarkup:
+    """Build navigation for one old listing snapshot."""
+    total = storage.listing_history_count_for_subscription(subscription.id)
+    index = max(0, min(index, max(total - 1, 0)))
+    rows: list[list[InlineKeyboardButton]] = []
+    nav = []
+    if index > 0:
+        nav.append(
+            InlineKeyboardButton(
+                text="⬅️ Предыдущее",
+                callback_data=f"s:{subscription.id}:old:{index - 1}",
+            )
+        )
+    if index < total - 1:
+        nav.append(
+            InlineKeyboardButton(
+                text="Следующее ➡️",
+                callback_data=f"s:{subscription.id}:old:{index + 1}",
+            )
+        )
+    if nav:
+        rows.append(nav)
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="🕘 К истории",
+                    callback_data=(
+                        f"s:{subscription.id}:history:{index // HISTORY_PAGE_SIZE}"
+                    ),
                 )
             ],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)],
@@ -1366,7 +1439,7 @@ def history_subscriptions_text(chat_id: int) -> str:
     """Format old listings search selector."""
     subscriptions = storage.list_subscriptions(chat_id)
     total = sum(
-        len(storage.recent_seen_items_for_subscription(subscription.id))
+        storage.listing_history_count_for_subscription(subscription.id)
         for subscription in subscriptions
         if subscription.id is not None
     )
@@ -1380,19 +1453,17 @@ def history_subscriptions_text(chat_id: int) -> str:
 
 
 def history_text(subscription: UserProfile, page: int) -> str:
-    """Format one page of old loaded listings for a saved search."""
+    """Format listing history overview for a saved search."""
     if subscription.id is None:
         return "🕘 <b>Старые объявления</b>\n\nИстория пока пуста."
-    items = storage.recent_seen_items_for_subscription(subscription.id)
-    total_pages = max(1, (len(items) + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
+    total = storage.listing_history_count_for_subscription(subscription.id)
+    total_pages = max(1, (total + HISTORY_PAGE_SIZE - 1) // HISTORY_PAGE_SIZE)
     page = max(0, min(page, total_pages - 1))
-    start = page * HISTORY_PAGE_SIZE
-    page_items = items[start : start + HISTORY_PAGE_SIZE]
     lines = [
         f"🕘 <b>Старые объявления: {escape(subscription.title)}</b>",
         "",
     ]
-    if not page_items:
+    if total == 0:
         lines.extend(
             [
                 "История пока пуста.",
@@ -1402,15 +1473,32 @@ def history_text(subscription: UserProfile, page: int) -> str:
             ]
         )
         return "\n".join(lines)
-    lines.append(f"Страница <b>{page + 1}</b> из <b>{total_pages}</b>")
-    lines.append("")
-    for index, (source, ad_id) in enumerate(page_items, start=start + 1):
-        source_title = {"kufar": "Kufar", "realt": "Realt"}.get(source, source)
-        url = listing_history_url(source, ad_id, subscription.request)
-        lines.append(
-            f"{index}. <a href=\"{escape(url)}\">{escape(source_title)} #{ad_id}</a>"
-        )
+    lines.extend(
+        [
+            f"Сохранено подходящих объявлений: <b>{total}</b>",
+            "",
+            "Нажми <b>Просмотр</b>, чтобы листать карточки по одной.",
+        ]
+    )
     return "\n".join(lines)
+
+
+def old_listing_text(subscription: UserProfile, index: int) -> str:
+    """Format one stored old listing snapshot."""
+    if subscription.id is None:
+        return "🕘 <b>Старые объявления</b>\n\nИстория пока пуста."
+    total = storage.listing_history_count_for_subscription(subscription.id)
+    if total == 0:
+        return history_text(subscription, 0)
+    index = max(0, min(index, total - 1))
+    listing = storage.history_listing_for_subscription(subscription.id, index)
+    if listing is None:
+        return history_text(subscription, 0)
+    presentation = build_listing_presentation(listing, max_images=0)
+    return (
+        f"🕘 <b>Старое объявление {index + 1}/{total}</b>\n\n"
+        f"{presentation.caption}"
+    )
 
 
 def listing_history_url(source: str, ad_id: int, request: SearchRequest) -> str:

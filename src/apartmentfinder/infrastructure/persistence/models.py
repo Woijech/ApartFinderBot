@@ -1,8 +1,9 @@
 """SQLAlchemy database models for bot persistence.
 
 The schema is intentionally small but shaped for growth: a chat can own many
-subscriptions, every subscription has its own seen-ad set, and notification
-attempts can be audited later without changing Telegram handler code.
+    subscriptions, every subscription has its own seen-ad set, and notification
+attempts and listing snapshots can be audited later without changing Telegram
+handler code.
 """
 
 from __future__ import annotations
@@ -92,6 +93,10 @@ class SubscriptionRow(Base):
         back_populates="subscription",
         cascade="all, delete-orphan",
     )
+    listing_history: Mapped[list[ListingHistoryRow]] = relationship(
+        back_populates="subscription",
+        cascade="all, delete-orphan",
+    )
 
 
 class SeenAdRow(Base):
@@ -153,4 +158,43 @@ class NotificationLogRow(Base):
 
     subscription: Mapped[SubscriptionRow] = relationship(
         back_populates="notification_logs"
+    )
+
+
+class ListingHistoryRow(Base):
+    """Recent listing snapshot that matched one saved search."""
+
+    __tablename__ = "listing_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_id",
+            "source",
+            "ad_id",
+            name="uq_listing_history_subscription_source_ad",
+        ),
+        Index(
+            "idx_listing_history_subscription_saved_at",
+            "subscription_id",
+            "saved_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    subscription_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    seller_name: Mapped[str | None] = mapped_column(String(240))
+    listing_json: Mapped[str] = mapped_column(Text, nullable=False)
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    subscription: Mapped[SubscriptionRow] = relationship(
+        back_populates="listing_history"
     )
