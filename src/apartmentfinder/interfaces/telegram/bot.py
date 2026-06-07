@@ -1019,30 +1019,25 @@ async def send_old_listing(
         caption_limit,
     )
     keyboard = old_listing_keyboard(subscription, index)
+    await delete_message_if_possible(message)
     if presentation.image_urls:
-        if len(presentation.image_urls) == 1:
-            await message.answer_photo(
-                presentation.image_urls[0],
-                caption=caption,
-                reply_markup=keyboard,
-            )
-            return
-        await message.answer_media_group(
-            media_group_from_presentation(
-                ListingPresentation(
-                    caption=caption,
-                    details=presentation.details,
-                    image_urls=presentation.image_urls,
-                )
-            )
+        await message.answer_photo(
+            presentation.image_urls[0],
+            caption=caption,
+            reply_markup=keyboard,
         )
-        await message.answer("Действия с объявлением:", reply_markup=keyboard)
         return
-    await message.edit_text(
+    await message.answer(
         caption,
         reply_markup=keyboard,
         disable_web_page_preview=True,
     )
+
+
+async def delete_message_if_possible(message: Message) -> None:
+    """Delete a history card before replacing it with another one."""
+    with suppress(Exception):
+        await message.delete()
 
 
 async def edit_or_answer(
@@ -1390,14 +1385,14 @@ def old_listing_keyboard(subscription: UserProfile, index: int) -> InlineKeyboar
     if index > 0:
         nav.append(
             InlineKeyboardButton(
-                text="⬅️ Предыдущее",
+                text="⬅️ Новее",
                 callback_data=f"s:{subscription.id}:old:{index - 1}",
             )
         )
     if index < total - 1:
         nav.append(
             InlineKeyboardButton(
-                text="Следующее ➡️",
+                text="Старее ➡️",
                 callback_data=f"s:{subscription.id}:old:{index + 1}",
             )
         )

@@ -27,6 +27,7 @@ class FakeCallbackMessage:
         self.media_groups: list[list[object]] = []
         self.messages: list[dict[str, object]] = []
         self.edited_texts: list[dict[str, object]] = []
+        self.deleted = False
 
     async def answer(self, *args: object, **kwargs: object) -> None:
         self.messages.append({"args": args, "kwargs": kwargs})
@@ -43,6 +44,9 @@ class FakeCallbackMessage:
     async def answer_media_group(self, media: list[object]) -> None:
         self.media_groups.append(media)
         return None
+
+    async def delete(self) -> None:
+        self.deleted = True
 
 
 class FakeCallback:
@@ -297,11 +301,39 @@ def test_send_old_listing_includes_image_when_history_snapshot_has_photo(
 
     asyncio.run(send_old_listing(message, UserProfile(chat_id=123, id=7), 0))
 
+    assert message.deleted is True
     assert message.edited_texts == []
     assert message.photos[0]["args"][0] == "https://img.test/1.jpg"
     assert message.photos[0]["kwargs"]["caption"].startswith(
         "🕘 <b>Старое объявление 1/1</b>"
     )
+
+
+def test_send_old_listing_uses_single_replaceable_card_for_multiple_images(
+    monkeypatch,
+) -> None:
+    listing = Listing(
+        ad_id=123,
+        title="История",
+        url="https://example.test/123",
+        images=[
+            ListingImage(gallery_url="https://img.test/1.jpg"),
+            ListingImage(gallery_url="https://img.test/2.jpg"),
+        ],
+    )
+    fake_storage = SimpleNamespace(
+        listing_history_count_for_subscription=lambda _id: 1,
+        history_listing_for_subscription=lambda _id, _index: listing,
+    )
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    message = FakeCallbackMessage()
+
+    asyncio.run(send_old_listing(message, UserProfile(chat_id=123, id=7), 0))
+
+    assert message.deleted is True
+    assert len(message.photos) == 1
+    assert message.photos[0]["args"][0] == "https://img.test/1.jpg"
+    assert message.media_groups == []
 
 
 def test_enable_subscription_watch_does_not_save_current_listings_to_history(
