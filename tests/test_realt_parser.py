@@ -77,7 +77,7 @@ def test_parse_realt_room_search_page() -> None:
 
     assert listing.source == "realt"
     assert listing.ad_id == 4119308
-    assert listing.url == "https://realt.by/rent/room-for-long/object/4119308/"
+    assert listing.url == "https://realt.by/rent-rooms-for-long/object/4119308/"
     assert listing.price_usd == 160
     assert listing.price_byn == 451
     assert listing.rooms == "1"
@@ -95,6 +95,7 @@ def test_parse_realt_flat_search_page() -> None:
     listing = result.listings[0]
 
     assert listing.title == "Стильная студия"
+    assert listing.url == "https://realt.by/rent-flat-for-long/object/4089354/"
     assert listing.price_usd == 480
     assert listing.rooms == "1"
     assert listing.area_m2 == 30
@@ -222,7 +223,7 @@ def test_parse_realt_live_text_blocks_without_card_dom() -> None:
     assert [listing.ad_id for listing in result.listings] == [4119308, 3051236]
     first = result.listings[0]
     assert first.source == "realt"
-    assert first.url == "https://realt.by/rent/room-for-long/object/4119308/"
+    assert first.url == "https://realt.by/rent-rooms-for-long/object/4119308/"
     assert first.price_usd == 160
     assert first.price_byn == 451
     assert first.rooms == "1"
@@ -247,5 +248,6 @@ def test_parse_realt_detail_page_merges_meta_data() -> None:
     listing = parse_realt_detail_page(detail_html, fallback)
 
     assert listing.title == "Комната с полным описанием"
+    assert listing.url == "https://realt.by/rent-rooms-for-long/object/4119308/"
     assert listing.description == "Полное описание из detail страницы."
     assert listing.images[0].gallery_url == "https://img.realt.by/room.jpg"

@@ -319,7 +319,7 @@ def parse_realt_detail_page(
     description = _meta_content(soup, "description") or fallback.description
     title = _title_from_detail(soup) or fallback.title
     images = _detail_images(soup, base_url) or fallback.images
-    canonical = _canonical_url(soup, base_url) or fallback.url
+    canonical = _normalize_listing_url(_canonical_url(soup, base_url) or fallback.url)
     return replace(
         fallback,
         title=title,
@@ -534,14 +534,24 @@ def _listing_url(card: Tag, ad_id: int, base_url: str, property_type: str) -> st
     for anchor in card.find_all("a", href=True):
         href = str(anchor["href"])
         if str(ad_id) in href:
-            return urljoin(base_url, href).split("?", maxsplit=1)[0]
+            url = urljoin(base_url, href).split("?", maxsplit=1)[0]
+            return _normalize_listing_url(url)
     return _fallback_listing_url(ad_id, base_url, property_type)
 
 
 def _fallback_listing_url(ad_id: int, base_url: str, property_type: str) -> str:
     """Build the canonical Realt listing URL from source type and id."""
-    target = "room-for-long" if property_type == "room" else "flat-for-long"
-    return f"{base_url.rstrip('/')}/rent/{target}/object/{ad_id}/"
+    if property_type == "room":
+        return f"{base_url.rstrip('/')}/rent-rooms-for-long/object/{ad_id}/"
+    return f"{base_url.rstrip('/')}/rent-flat-for-long/object/{ad_id}/"
+
+
+def _normalize_listing_url(url: str) -> str:
+    """Return the public Realt URL format used in outgoing Telegram messages."""
+    return (
+        url.replace("/rent/room-for-long/object/", "/rent-rooms-for-long/object/")
+        .replace("/rent/flat-for-long/object/", "/rent-flat-for-long/object/")
+    )
 
 
 def _listing_title(
