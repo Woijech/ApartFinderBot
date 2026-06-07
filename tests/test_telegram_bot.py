@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from apartmentfinder.application.filtering import listing_matches_search_filters
 from apartmentfinder.application.monitoring import listings_after_watch_start
-from apartmentfinder.domain.models import Listing, SearchRequest
+from apartmentfinder.domain.models import Listing, ListingImage, SearchRequest
 from apartmentfinder.infrastructure.persistence.storage import UserProfile
 from apartmentfinder.interfaces.telegram import bot as telegram_bot
 from apartmentfinder.interfaces.telegram.bot import (
@@ -16,19 +16,53 @@ from apartmentfinder.interfaces.telegram.bot import (
     notify_profile,
     parse_keywords,
     parse_price_range_text,
+    send_listing,
+    send_old_listing,
 )
 
 
 class FakeCallbackMessage:
+    def __init__(self) -> None:
+        self.photos: list[dict[str, object]] = []
+        self.media_groups: list[list[object]] = []
+        self.messages: list[dict[str, object]] = []
+        self.edited_texts: list[dict[str, object]] = []
+
     async def answer(self, *args: object, **kwargs: object) -> None:
+        self.messages.append({"args": args, "kwargs": kwargs})
         return None
 
     async def edit_text(self, *args: object, **kwargs: object) -> None:
+        self.edited_texts.append({"args": args, "kwargs": kwargs})
+        return None
+
+    async def answer_photo(self, *args: object, **kwargs: object) -> None:
+        self.photos.append({"args": args, "kwargs": kwargs})
+        return None
+
+    async def answer_media_group(self, media: list[object]) -> None:
+        self.media_groups.append(media)
         return None
 
 
 class FakeCallback:
     message = FakeCallbackMessage()
+
+
+class FakeBot:
+    def __init__(self) -> None:
+        self.photos: list[dict[str, object]] = []
+        self.media_groups: list[list[object]] = []
+        self.messages: list[dict[str, object]] = []
+
+    async def send_photo(self, *args: object, **kwargs: object) -> None:
+        self.photos.append({"args": args, "kwargs": kwargs})
+
+    async def send_media_group(self, chat_id: int, media: list[object]) -> None:
+        self.media_groups.append(media)
+
+    async def send_message(self, *args: object, **kwargs: object) -> None:
+        self.messages.append({"args": args, "kwargs": kwargs})
 
 
 def test_listings_after_watch_start_keeps_only_newer_items() -> None:
@@ -215,6 +249,59 @@ def test_listing_navigation_keyboard_skips_seller_ban_without_name() -> None:
     assert any(button.callback_data == "fav:add:realt:123" for button in buttons)
     assert not any(button.callback_data == "ban:realt:123" for button in buttons)
     assert any(button.callback_data == "menu:main" for button in buttons)
+
+
+def test_send_listing_keeps_multiple_images_in_one_album() -> None:
+    listing = Listing(
+        ad_id=123,
+        title="Квартира",
+        url="https://example.test/123",
+        images=[
+            ListingImage(gallery_url="https://img.test/1.jpg"),
+            ListingImage(gallery_url="https://img.test/2.jpg"),
+            ListingImage(gallery_url="https://img.test/3.jpg"),
+        ],
+    )
+    bot = FakeBot()
+
+    asyncio.run(send_listing(bot, 123, listing))
+
+    assert bot.photos == []
+    assert len(bot.media_groups) == 1
+    assert [item.media for item in bot.media_groups[0]] == [
+        "https://img.test/1.jpg",
+        "https://img.test/2.jpg",
+        "https://img.test/3.jpg",
+    ]
+    assert bot.media_groups[0][0].caption
+    assert bot.media_groups[0][1].caption is None
+    assert bot.media_groups[0][2].caption is None
+    assert bot.messages[0]["args"][1] == "Действия с объявлением:"
+
+
+def test_send_old_listing_includes_image_when_history_snapshot_has_photo(
+    monkeypatch,
+) -> None:
+    listing = Listing(
+        ad_id=123,
+        title="История",
+        url="https://example.test/123",
+        images=[ListingImage(gallery_url="https://img.test/1.jpg")],
+    )
+    fake_storage = SimpleNamespace(
+        listing_history_count_for_subscription=lambda _id: 1,
+        history_listing_for_subscription=lambda _id, _index: listing,
+    )
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    message = FakeCallbackMessage()
+
+    asyncio.run(send_old_listing(message, UserProfile(chat_id=123, id=7), 0))
+
+    assert message.edited_texts == []
+    assert message.photos[0]["args"][0] == "https://img.test/1.jpg"
+    assert message.photos[0]["kwargs"]["caption"].startswith(
+        "🕘 <b>Старое объявление 1/1</b>"
+    )
 
 
 def test_enable_subscription_watch_does_not_save_current_listings_to_history(

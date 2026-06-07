@@ -50,8 +50,11 @@ from apartmentfinder.infrastructure.source_registry import (
     configured_sources,
 )
 from apartmentfinder.interfaces.telegram.formatting import (
+    TELEGRAM_CAPTION_LIMIT,
+    TELEGRAM_MESSAGE_LIMIT,
     ListingPresentation,
     build_listing_presentation,
+    trim_for_telegram,
 )
 from apartmentfinder.interfaces.telegram.search_catalog import (
     DISTRICT_OPTIONS,
@@ -441,11 +444,7 @@ async def subscription_callback(callback: CallbackQuery) -> None:
         return
     if action == "old":
         index = int(value or "0")
-        await callback.message.edit_text(
-            old_listing_text(subscription, index),
-            reply_markup=old_listing_keyboard(subscription, index),
-            disable_web_page_preview=True,
-        )
+        await send_old_listing(callback.message, subscription, index)
         await callback.answer()
         return
     if action == "delete":
@@ -781,7 +780,8 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     notification_limit = max(0, settings.bot_max_notifications_per_check)
     listings_to_send = new_listings[:notification_limit]
     listings_not_sent = new_listings[notification_limit:]
-    save_matching_listing_history(profile, listings_not_sent)
+    history_listings = await fetch_listing_details(listings_not_sent[:50])
+    save_matching_listing_history(profile, history_listings)
     logger.info(
         "listing_notifications_planned chat_id=%s subscription_id=%s new=%s "
         "to_send=%s",
@@ -948,23 +948,99 @@ async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
         max_images=settings.bot_max_images,
     )
     if presentation.image_urls:
-        await bot.send_photo(
-            chat_id,
-            presentation.image_urls[0],
-            caption=presentation.caption,
-            reply_markup=listing_navigation_keyboard(listing),
-        )
         if len(presentation.image_urls) == 1:
+            await bot.send_photo(
+                chat_id,
+                presentation.image_urls[0],
+                caption=presentation.caption,
+                reply_markup=listing_navigation_keyboard(listing),
+            )
             return
         await bot.send_media_group(
             chat_id,
-            [InputMediaPhoto(media=url) for url in presentation.image_urls[1:]],
+            media_group_from_presentation(presentation),
+        )
+        await bot.send_message(
+            chat_id,
+            "Действия с объявлением:",
+            reply_markup=listing_navigation_keyboard(listing),
         )
         return
     await bot.send_message(
         chat_id,
         presentation.caption,
         reply_markup=listing_navigation_keyboard(listing),
+        disable_web_page_preview=True,
+    )
+
+
+async def send_old_listing(
+    message: Message,
+    subscription: UserProfile,
+    index: int,
+) -> None:
+    """Send one stored old listing snapshot with images when available."""
+    if subscription.id is None:
+        await message.edit_text(
+            old_listing_text(subscription, index),
+            reply_markup=old_listing_keyboard(subscription, index),
+            disable_web_page_preview=True,
+        )
+        return
+    total = storage.listing_history_count_for_subscription(subscription.id)
+    if total == 0:
+        await message.edit_text(
+            history_text(subscription, 0),
+            reply_markup=history_keyboard(subscription, 0),
+            disable_web_page_preview=True,
+        )
+        return
+    index = max(0, min(index, total - 1))
+    listing = storage.history_listing_for_subscription(subscription.id, index)
+    if listing is None:
+        await message.edit_text(
+            history_text(subscription, 0),
+            reply_markup=history_keyboard(subscription, 0),
+            disable_web_page_preview=True,
+        )
+        return
+    presentation = build_listing_presentation(
+        listing,
+        max_images=settings.bot_max_images,
+    )
+    caption_limit = (
+        TELEGRAM_CAPTION_LIMIT
+        if presentation.image_urls
+        else TELEGRAM_MESSAGE_LIMIT
+    )
+    caption = trim_for_telegram(
+        f"🕘 <b>Старое объявление {index + 1}/{total}</b>\n\n"
+        f"{presentation.caption}",
+        caption_limit,
+    )
+    keyboard = old_listing_keyboard(subscription, index)
+    if presentation.image_urls:
+        if len(presentation.image_urls) == 1:
+            await message.answer_photo(
+                presentation.image_urls[0],
+                caption=caption,
+                reply_markup=keyboard,
+            )
+            return
+        await message.answer_media_group(
+            media_group_from_presentation(
+                ListingPresentation(
+                    caption=caption,
+                    details=presentation.details,
+                    image_urls=presentation.image_urls,
+                )
+            )
+        )
+        await message.answer("Действия с объявлением:", reply_markup=keyboard)
+        return
+    await message.edit_text(
+        caption,
+        reply_markup=keyboard,
         disable_web_page_preview=True,
     )
 
