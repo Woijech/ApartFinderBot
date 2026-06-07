@@ -40,6 +40,12 @@ def test_settings_reads_new_apartmentfinder_env_prefix(monkeypatch) -> None:
     assert settings.bot_max_images == 4
 
 
+def test_settings_defaults_to_nine_listing_images() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.bot_max_images == 9
+
+
 def test_settings_reads_source_base_urls(monkeypatch) -> None:
     monkeypatch.setenv("APARTMENTFINDER_KUFAR_BASE_URL", "https://k.example.test")
     monkeypatch.setenv("APARTMENTFINDER_REALT_BASE_URL", "https://r.example.test")
@@ -69,5 +75,4 @@ def test_settings_parses_browser_fetch_bool_from_string() -> None:
 def test_settings_rejects_invalid_browser_fetch_timeout() -> None:
     with pytest.raises(ValidationError):
         Settings(browser_fetch_timeout_seconds=0, _env_file=None)
-
 
