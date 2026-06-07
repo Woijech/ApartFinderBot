@@ -65,7 +65,14 @@ def build_listing_presentation(
 
 def listing_header(listing: Listing) -> str:
     """Build the first line of a listing notification."""
-    return f"🆕 <b>{escape(listing.price_label)}</b>\n{escape(listing.title)}"
+    # Show both currencies when available (USD and BYN). Keep fallback text.
+    label_parts: list[str] = []
+    if listing.price_usd is not None:
+        label_parts.append(f"{listing.price_usd:g} $")
+    if listing.price_byn is not None:
+        label_parts.append(f"{listing.price_byn:g} BYN")
+    label = " / ".join(label_parts) if label_parts else "Договорная"
+    return f"🆕 <b>{escape(label)}</b>\n{escape(listing.title)}"
 
 
 def listing_facts(listing: Listing) -> str:
