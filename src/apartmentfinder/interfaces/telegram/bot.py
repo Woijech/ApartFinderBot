@@ -111,6 +111,7 @@ CALLBACK_NEW_SEARCH = "subscription:new"
 CALLBACK_HELP = "menu:help"
 CALLBACK_HISTORY = "menu:history"
 CALLBACK_BANNED = "menu:banned"
+CALLBACK_FAVORITES = "menu:favorites"
 CALLBACK_FILTERS = "menu:filters"
 CALLBACK_TYPE = "filter:type"
 CALLBACK_PRICE = "filter:price"
@@ -294,6 +295,61 @@ async def banned_sellers_menu(callback: CallbackQuery) -> None:
         disable_web_page_preview=True,
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == CALLBACK_FAVORITES)
+async def favorites_menu(callback: CallbackQuery) -> None:
+    """Show favorite listings for this chat."""
+    ensure_default_profile(callback.message.chat.id)
+    await edit_or_answer(
+        callback.message,
+        favorite_listing_text(callback.message.chat.id, 0),
+        reply_markup=favorite_listing_keyboard(callback.message.chat.id, 0),
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("fav:"))
+async def favorite_listing_callback(callback: CallbackQuery) -> None:
+    """Route favorite listing actions."""
+    parts = callback.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    chat_id = callback.message.chat.id
+    if action == "add" and len(parts) == 4:
+        _prefix, _action, source, ad_id_text = parts
+        listing = storage.history_listing_by_key(chat_id, source, int(ad_id_text))
+        if listing is None:
+            await callback.answer(
+                "Не нашёл сохранённый снимок объявления",
+                show_alert=True,
+            )
+            return
+        storage.add_favorite_listing(chat_id, listing)
+        await callback.answer("Добавлено в избранное", show_alert=True)
+        return
+    if action == "view" and len(parts) == 3:
+        index = int(parts[2])
+        await edit_or_answer(
+            callback.message,
+            favorite_listing_text(chat_id, index),
+            reply_markup=favorite_listing_keyboard(chat_id, index),
+            disable_web_page_preview=True,
+        )
+        await callback.answer()
+        return
+    if action == "remove" and len(parts) == 4:
+        _prefix, _action, source, ad_id_text = parts
+        storage.remove_favorite_listing(chat_id, source, int(ad_id_text))
+        await edit_or_answer(
+            callback.message,
+            favorite_listing_text(chat_id, 0),
+            reply_markup=favorite_listing_keyboard(chat_id, 0),
+            disable_web_page_preview=True,
+        )
+        await callback.answer("Удалено из избранного")
+        return
+    await callback.answer("Неизвестное действие", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("ban:"))
@@ -1099,6 +1155,12 @@ def main_menu_keyboard(_profile: UserProfile | None = None) -> InlineKeyboardMar
             ],
             [
                 InlineKeyboardButton(
+                    text="⭐ Избранное",
+                    callback_data=CALLBACK_FAVORITES,
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🚫 Забаненные продавцы",
                     callback_data=CALLBACK_BANNED,
                 )
@@ -1277,6 +1339,15 @@ def old_listing_keyboard(subscription: UserProfile, index: int) -> InlineKeyboar
                 )
             ]
         )
+    if listing is not None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⭐ В избранное",
+                    callback_data=f"fav:add:{listing.source}:{listing.ad_id}",
+                )
+            ]
+        )
     rows.extend(
         [
             [
@@ -1301,6 +1372,14 @@ def old_listing_keyboard(subscription: UserProfile, index: int) -> InlineKeyboar
 def listing_navigation_keyboard(listing: Listing) -> InlineKeyboardMarkup:
     """Build navigation attached to each sent listing notification."""
     rows = []
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⭐ В избранное",
+                callback_data=f"fav:add:{listing.source}:{listing.ad_id}",
+            )
+        ]
+    )
     if listing.seller_name:
         rows.append(
             [
@@ -1511,11 +1590,13 @@ def main_menu_text(chat_id: int) -> str:
     """Format the main screen text with a short summary of active filters."""
     subscriptions = storage.list_subscriptions(chat_id)
     enabled_count = sum(1 for item in subscriptions if item.enabled)
+    favorite_count = storage.favorite_listing_count(chat_id)
     return (
         "🏡 <b>ApartmentFinder</b>\n"
         "Новые объявления по аренде в Минске без ручного просмотра выдачи.\n\n"
         f"📌 Поисков: <b>{len(subscriptions)}</b>\n"
-        f"🔔 Активно: <b>{enabled_count}</b>\n\n"
+        f"🔔 Активно: <b>{enabled_count}</b>\n"
+        f"⭐ Избранное: <b>{favorite_count}</b>\n\n"
         "Создай поиск, настрой фильтры и включи слежение."
     )
 
@@ -1597,6 +1678,70 @@ def old_listing_text(subscription: UserProfile, index: int) -> str:
         f"🕘 <b>Старое объявление {index + 1}/{total}</b>\n\n"
         f"{presentation.caption}"
     )
+
+
+def favorite_listing_text(chat_id: int, index: int) -> str:
+    """Format one favorite listing snapshot."""
+    total = storage.favorite_listing_count(chat_id)
+    if total == 0:
+        return (
+            "⭐ <b>Избранное</b>\n\n"
+            "Список пуст. Нажимай <b>В избранное</b> под объявлением, чтобы "
+            "сохранить его здесь."
+        )
+    index = max(0, min(index, total - 1))
+    listing = storage.favorite_listing(chat_id, index)
+    if listing is None:
+        return (
+            "⭐ <b>Избранное</b>\n\n"
+            "Не смог открыть сохранённое объявление."
+        )
+    presentation = build_listing_presentation(listing, max_images=0)
+    return (
+        f"⭐ <b>Избранное {index + 1}/{total}</b>\n\n"
+        f"{presentation.caption}"
+    )
+
+
+def favorite_listing_keyboard(chat_id: int, index: int) -> InlineKeyboardMarkup:
+    """Build navigation for favorite listings."""
+    total = storage.favorite_listing_count(chat_id)
+    index = max(0, min(index, max(total - 1, 0)))
+    rows: list[list[InlineKeyboardButton]] = []
+    if total:
+        nav = []
+        if index > 0:
+            nav.append(
+                InlineKeyboardButton(
+                    text="⬅️ Предыдущее",
+                    callback_data=f"fav:view:{index - 1}",
+                )
+            )
+        if index < total - 1:
+            nav.append(
+                InlineKeyboardButton(
+                    text="Следующее ➡️",
+                    callback_data=f"fav:view:{index + 1}",
+                )
+            )
+        if nav:
+            rows.append(nav)
+        listing = storage.favorite_listing(chat_id, index)
+        if listing is not None:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="🗑 Удалить из избранного",
+                        callback_data=(
+                            f"fav:remove:{listing.source}:{listing.ad_id}"
+                        ),
+                    )
+                ]
+            )
+    rows.append(
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def banned_sellers_text(chat_id: int) -> str:

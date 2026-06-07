@@ -178,6 +178,7 @@ def test_listing_navigation_keyboard_includes_seller_ban_when_known() -> None:
     keyboard = listing_navigation_keyboard(listing)
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
+    assert any(button.callback_data == "fav:add:realt:123" for button in buttons)
     assert any(button.callback_data == "ban:realt:123" for button in buttons)
     assert any(button.callback_data == "menu:main" for button in buttons)
 
@@ -193,5 +194,6 @@ def test_listing_navigation_keyboard_skips_seller_ban_without_name() -> None:
     keyboard = listing_navigation_keyboard(listing)
     buttons = [button for row in keyboard.inline_keyboard for button in row]
 
+    assert any(button.callback_data == "fav:add:realt:123" for button in buttons)
     assert not any(button.callback_data == "ban:realt:123" for button in buttons)
     assert any(button.callback_data == "menu:main" for button in buttons)

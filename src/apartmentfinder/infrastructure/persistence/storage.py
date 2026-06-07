@@ -20,6 +20,7 @@ from apartmentfinder.infrastructure.persistence.models import (
     BannedSellerRow,
     Base,
     ChatRow,
+    FavoriteListingRow,
     ListingHistoryRow,
     NotificationLogRow,
     SeenAdRow,
@@ -338,6 +339,74 @@ class BotStorage:
                 .limit(1)
             )
             return _listing_from_json(row.listing_json) if row is not None else None
+
+    def add_favorite_listing(self, chat_id: int, listing: Listing) -> None:
+        """Save or refresh one listing in chat favorites."""
+        created_at = datetime.now(UTC)
+        listing_json = _listing_to_json(listing)
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            row = session.scalar(
+                select(FavoriteListingRow).where(
+                    FavoriteListingRow.chat_id == chat_id,
+                    FavoriteListingRow.source == listing.source,
+                    FavoriteListingRow.ad_id == listing.ad_id,
+                )
+            )
+            if row is None:
+                session.add(
+                    FavoriteListingRow(
+                        chat_id=chat_id,
+                        source=listing.source,
+                        ad_id=listing.ad_id,
+                        seller_name=listing.seller_name,
+                        listing_json=listing_json,
+                        created_at=created_at,
+                    )
+                )
+            else:
+                row.seller_name = listing.seller_name
+                row.listing_json = listing_json
+                row.created_at = created_at
+            session.commit()
+
+    def favorite_listing_count(self, chat_id: int) -> int:
+        """Return saved favorite listing count for one chat."""
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(FavoriteListingRow)
+                    .where(FavoriteListingRow.chat_id == chat_id)
+                )
+                or 0
+            )
+
+    def favorite_listing(self, chat_id: int, index: int) -> Listing | None:
+        """Return one favorite listing by newest-first index."""
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            row = session.scalar(
+                select(FavoriteListingRow)
+                .where(FavoriteListingRow.chat_id == chat_id)
+                .order_by(FavoriteListingRow.created_at.desc())
+                .offset(max(index, 0))
+                .limit(1)
+            )
+            return _listing_from_json(row.listing_json) if row is not None else None
+
+    def remove_favorite_listing(self, chat_id: int, source: str, ad_id: int) -> None:
+        """Remove one listing from chat favorites."""
+        with self._session_factory() as session:
+            session.execute(
+                delete(FavoriteListingRow).where(
+                    FavoriteListingRow.chat_id == chat_id,
+                    FavoriteListingRow.source == source,
+                    FavoriteListingRow.ad_id == ad_id,
+                )
+            )
+            session.commit()
 
     def list_banned_sellers(self, chat_id: int) -> list[BannedSeller]:
         """Return sellers hidden by one chat."""

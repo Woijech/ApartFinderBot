@@ -55,6 +55,10 @@ class ChatRow(Base):
         back_populates="chat",
         cascade="all, delete-orphan",
     )
+    favorite_listings: Mapped[list[FavoriteListingRow]] = relationship(
+        back_populates="chat",
+        cascade="all, delete-orphan",
+    )
 
 
 class SubscriptionRow(Base):
@@ -101,6 +105,7 @@ class SubscriptionRow(Base):
         back_populates="subscription",
         cascade="all, delete-orphan",
     )
+
 
 class SeenAdRow(Base):
     """One listing already seen by one subscription."""
@@ -232,3 +237,40 @@ class BannedSellerRow(Base):
     )
 
     chat: Mapped[ChatRow] = relationship(back_populates="banned_sellers")
+
+
+class FavoriteListingRow(Base):
+    """One listing saved to favorites by a Telegram chat."""
+
+    __tablename__ = "favorite_listings"
+    __table_args__ = (
+        UniqueConstraint(
+            "chat_id",
+            "source",
+            "ad_id",
+            name="uq_favorite_listings_chat_source_ad",
+        ),
+        Index(
+            "idx_favorite_listings_chat_created_at",
+            "chat_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("chats.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    ad_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    seller_name: Mapped[str | None] = mapped_column(String(240))
+    listing_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    chat: Mapped[ChatRow] = relationship(back_populates="favorite_listings")
