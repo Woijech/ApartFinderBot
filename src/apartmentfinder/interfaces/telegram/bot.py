@@ -635,7 +635,6 @@ async def enable_subscription_watch(
         return
     profile.enabled = True
     profile.watch_started_at = datetime.now(UTC)
-    save_matching_listing_history(profile, listings)
     mark_subscription_seen(profile, listings)
     storage.update_subscription(profile)
     logger.info(
@@ -746,7 +745,6 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
             listing.seller_name,
         )
     )
-    save_matching_listing_history(profile, fresh_listings)
     unseen_keys = set(
         unseen_items_for_subscription(
             profile,
@@ -782,6 +780,8 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
 
     notification_limit = max(0, settings.bot_max_notifications_per_check)
     listings_to_send = new_listings[:notification_limit]
+    listings_not_sent = new_listings[notification_limit:]
+    save_matching_listing_history(profile, listings_not_sent)
     logger.info(
         "listing_notifications_planned chat_id=%s subscription_id=%s new=%s "
         "to_send=%s",

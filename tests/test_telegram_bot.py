@@ -1,16 +1,34 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from apartmentfinder.application.filtering import listing_matches_search_filters
 from apartmentfinder.application.monitoring import listings_after_watch_start
 from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.persistence.storage import UserProfile
+from apartmentfinder.interfaces.telegram import bot as telegram_bot
 from apartmentfinder.interfaces.telegram.bot import (
+    enable_subscription_watch,
+    history_keyboard,
     listing_history_url,
     listing_navigation_keyboard,
+    notify_profile,
     parse_keywords,
     parse_price_range_text,
 )
+
+
+class FakeCallbackMessage:
+    async def answer(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def edit_text(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+class FakeCallback:
+    message = FakeCallbackMessage()
 
 
 def test_listings_after_watch_start_keeps_only_newer_items() -> None:
@@ -197,3 +215,138 @@ def test_listing_navigation_keyboard_skips_seller_ban_without_name() -> None:
     assert any(button.callback_data == "fav:add:realt:123" for button in buttons)
     assert not any(button.callback_data == "ban:realt:123" for button in buttons)
     assert any(button.callback_data == "menu:main" for button in buttons)
+
+
+def test_enable_subscription_watch_does_not_save_current_listings_to_history(
+    monkeypatch,
+) -> None:
+    listings = [
+        Listing(ad_id=1, title="Текущая выдача", url="https://example.test/1")
+    ]
+    saved_history: list[list[Listing]] = []
+    marked_seen: list[list[Listing]] = []
+
+    async def fake_run_profile_check(
+        profile: UserProfile,
+        operation,
+        *,
+        skip_if_running: bool = False,
+    ) -> list[Listing]:
+        return await operation()
+
+    async def fake_fetch_listings(profile: UserProfile) -> list[Listing]:
+        return listings
+
+    fake_storage = SimpleNamespace(update_subscription=lambda profile: None)
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    monkeypatch.setattr(telegram_bot, "run_profile_check", fake_run_profile_check)
+    monkeypatch.setattr(telegram_bot, "fetch_listings", fake_fetch_listings)
+    monkeypatch.setattr(
+        telegram_bot,
+        "save_matching_listing_history",
+        lambda profile, items: saved_history.append(items),
+    )
+    monkeypatch.setattr(
+        telegram_bot,
+        "mark_subscription_seen",
+        lambda profile, items: marked_seen.append(items),
+    )
+
+    profile = UserProfile(chat_id=123, id=1)
+
+    asyncio.run(enable_subscription_watch(FakeCallback(), profile))
+
+    assert profile.enabled is True
+    assert profile.watch_started_at is not None
+    assert marked_seen == [listings]
+    assert saved_history == []
+
+
+def test_notify_profile_saves_only_unnotified_new_listings_to_history(
+    monkeypatch,
+) -> None:
+    started_at = datetime(2026, 5, 7, 12, 0, tzinfo=UTC)
+    listings = [
+        Listing(
+            ad_id=ad_id,
+            title=f"Новое {ad_id}",
+            url=f"https://example.test/{ad_id}",
+            published_at=datetime(2026, 5, 7, 12, ad_id, tzinfo=UTC),
+        )
+        for ad_id in range(1, 5)
+    ]
+    saved_history: list[list[Listing]] = []
+    sent_ids: list[int] = []
+    marked_seen: list[list[Listing]] = []
+
+    async def fake_run_profile_check(
+        profile: UserProfile,
+        operation,
+        *,
+        skip_if_running: bool = False,
+    ) -> list[Listing]:
+        return await operation()
+
+    async def fake_fetch_listings(profile: UserProfile) -> list[Listing]:
+        return listings
+
+    async def fake_fetch_listing_details(items: list[Listing]) -> list[Listing]:
+        return items
+
+    async def fake_send_listing(bot: object, chat_id: int, listing: Listing) -> None:
+        sent_ids.append(listing.ad_id)
+
+    fake_storage = SimpleNamespace(
+        is_seller_banned=lambda chat_id, source, seller_name: False,
+        log_notification_for_subscription=lambda *args, **kwargs: None,
+        update_subscription=lambda profile: None,
+    )
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    monkeypatch.setattr(
+        telegram_bot,
+        "settings",
+        SimpleNamespace(bot_max_notifications_per_check=2),
+    )
+    monkeypatch.setattr(telegram_bot, "run_profile_check", fake_run_profile_check)
+    monkeypatch.setattr(telegram_bot, "fetch_listings", fake_fetch_listings)
+    monkeypatch.setattr(
+        telegram_bot,
+        "fetch_listing_details",
+        fake_fetch_listing_details,
+    )
+    monkeypatch.setattr(telegram_bot, "send_listing", fake_send_listing)
+    monkeypatch.setattr(
+        telegram_bot,
+        "unseen_items_for_subscription",
+        lambda profile, keys: keys,
+    )
+    monkeypatch.setattr(
+        telegram_bot,
+        "save_matching_listing_history",
+        lambda profile, items: saved_history.append(items),
+    )
+    monkeypatch.setattr(
+        telegram_bot,
+        "mark_subscription_seen",
+        lambda profile, items: marked_seen.append(items),
+    )
+
+    profile = UserProfile(chat_id=123, id=1, watch_started_at=started_at)
+
+    asyncio.run(notify_profile(object(), profile))
+
+    assert sent_ids == [2, 1]
+    assert [[listing.ad_id for listing in items] for items in saved_history] == [[3, 4]]
+    assert marked_seen == [listings]
+
+
+def test_history_keyboard_opens_old_listing_view_when_history_exists(
+    monkeypatch,
+) -> None:
+    fake_storage = SimpleNamespace(listing_history_count_for_subscription=lambda _id: 1)
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+
+    keyboard = history_keyboard(UserProfile(chat_id=123, id=7), 0)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert any(button.callback_data == "s:7:old:0" for button in buttons)
