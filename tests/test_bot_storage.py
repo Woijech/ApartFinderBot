@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from apartmentfinder.domain.models import SearchRequest
+from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.persistence.models import Base
 from apartmentfinder.infrastructure.persistence.storage import BotStorage
 
@@ -95,3 +95,28 @@ def test_bot_storage_tracks_seen_items_by_source() -> None:
         ("kufar", 1),
         ("realt", 1),
     }
+
+
+def test_bot_storage_orders_history_by_listing_publication_time() -> None:
+    storage = make_storage()
+    subscription = storage.create_subscription(123, "Комната", SearchRequest())
+    old_listing = Listing(
+        ad_id=1,
+        title="Майское",
+        url="https://example.test/1",
+        published_at=datetime(2026, 5, 20, 12, 0, tzinfo=UTC),
+    )
+    new_listing = Listing(
+        ad_id=2,
+        title="Июньское",
+        url="https://example.test/2",
+        published_at=datetime(2026, 6, 7, 12, 0, tzinfo=UTC),
+    )
+
+    storage.save_listing_history_for_subscription(
+        subscription.id,
+        [old_listing, new_listing],
+    )
+
+    assert storage.history_listing_for_subscription(subscription.id, 0) == new_listing
+    assert storage.history_listing_for_subscription(subscription.id, 1) == old_listing

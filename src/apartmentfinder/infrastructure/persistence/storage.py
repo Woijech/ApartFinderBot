@@ -277,12 +277,14 @@ class BotStorage:
                             ad_id=ad_id,
                             seller_name=listing.seller_name,
                             listing_json=listing_json,
+                            published_at=_datetime_to_db(listing.published_at),
                             saved_at=saved_at,
                         )
                     )
                     continue
                 row.seller_name = listing.seller_name
                 row.listing_json = listing_json
+                row.published_at = _datetime_to_db(listing.published_at)
                 row.saved_at = saved_at
             self._prune_listing_history_for_subscription(
                 session,
@@ -313,7 +315,10 @@ class BotStorage:
             row = session.scalar(
                 select(ListingHistoryRow)
                 .where(ListingHistoryRow.subscription_id == subscription_id)
-                .order_by(ListingHistoryRow.saved_at.desc())
+                .order_by(
+                    ListingHistoryRow.published_at.desc().nullslast(),
+                    ListingHistoryRow.saved_at.desc(),
+                )
                 .offset(max(index, 0))
                 .limit(1)
             )
@@ -880,7 +885,10 @@ class BotStorage:
         stale_ids = session.scalars(
             select(ListingHistoryRow.id)
             .where(ListingHistoryRow.subscription_id == subscription_id)
-            .order_by(ListingHistoryRow.saved_at.desc())
+            .order_by(
+                ListingHistoryRow.published_at.desc().nullslast(),
+                ListingHistoryRow.saved_at.desc(),
+            )
             .offset(max(limit, 0))
         ).all()
         if stale_ids:

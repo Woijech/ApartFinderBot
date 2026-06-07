@@ -185,6 +185,11 @@ class ListingHistoryRow(Base):
             "subscription_id",
             "saved_at",
         ),
+        Index(
+            "idx_listing_history_subscription_published_at",
+            "subscription_id",
+            "published_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -197,6 +202,7 @@ class ListingHistoryRow(Base):
     source: Mapped[str] = mapped_column(String(40), nullable=False)
     seller_name: Mapped[str | None] = mapped_column(String(240))
     listing_json: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     saved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
