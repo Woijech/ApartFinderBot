@@ -172,6 +172,7 @@ def test_parse_realt_next_data_listings_prefer_headline_description() -> None:
                         "address": "Минск Притыцкого ул. 10",
                         "metroStationName": "Кунцевщина",
                         "metroTime": 5,
+                        "agencyName": "Риэлт Сервис",
                         "images": ["https://cdn.realt.by/img/55/room"],
                     },
                     {
@@ -207,6 +208,7 @@ def test_parse_realt_next_data_listings_prefer_headline_description() -> None:
     assert first.floor == "1"
     assert first.total_floors == "9"
     assert first.metro == ["Кунцевщина 5 минут"]
+    assert first.seller_name == "Риэлт Сервис"
     assert first.images[0].gallery_url == "https://cdn.realt.by/img/55/room"
     assert result.listings[1].title == "Комната"
     assert result.listings[1].description == "Полное описание из JSON."

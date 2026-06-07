@@ -148,6 +148,7 @@ def _parse_next_data_listing(
         metro=_json_metro(item),
         description=_normalize_text(description),
         published_at=_datetime_or_none(item.get("createdAt")),
+        seller_name=item.get("agencyName") or item.get("companyName"),
         company_ad=bool(item.get("agencyName") or item.get("companyName")),
         images=_json_images(item),
         raw_parameters={"source": REALT_SOURCE, "parser": "next_data"},

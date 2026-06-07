@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from apartmentfinder.domain.models import Listing, ListingImage, SearchRequest
 from apartmentfinder.infrastructure.persistence.models import (
+    BannedSellerRow,
     Base,
     ChatRow,
     ListingHistoryRow,
@@ -43,6 +44,16 @@ class SearchSubscription:
 
 
 UserProfile = SearchSubscription
+
+
+@dataclass(frozen=True)
+class BannedSeller:
+    """A seller hidden by one Telegram chat."""
+
+    id: int
+    chat_id: int
+    source: str
+    seller_name: str
 
 
 class BotStorage:
@@ -306,6 +317,108 @@ class BotStorage:
                 .limit(1)
             )
             return _listing_from_json(row.listing_json) if row is not None else None
+
+    def history_listing_by_key(
+        self,
+        chat_id: int,
+        source: str,
+        ad_id: int,
+    ) -> Listing | None:
+        """Return the latest stored listing for one chat/source/ad pair."""
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(ListingHistoryRow)
+                .join(SubscriptionRow)
+                .where(
+                    SubscriptionRow.chat_id == chat_id,
+                    ListingHistoryRow.source == source,
+                    ListingHistoryRow.ad_id == ad_id,
+                )
+                .order_by(ListingHistoryRow.saved_at.desc())
+                .limit(1)
+            )
+            return _listing_from_json(row.listing_json) if row is not None else None
+
+    def list_banned_sellers(self, chat_id: int) -> list[BannedSeller]:
+        """Return sellers hidden by one chat."""
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            rows = session.scalars(
+                select(BannedSellerRow)
+                .where(BannedSellerRow.chat_id == chat_id)
+                .order_by(BannedSellerRow.created_at.desc())
+            ).all()
+            return [
+                BannedSeller(
+                    id=row.id,
+                    chat_id=row.chat_id,
+                    source=row.source,
+                    seller_name=row.seller_name,
+                )
+                for row in rows
+            ]
+
+    def ban_seller(self, chat_id: int, source: str, seller_name: str) -> None:
+        """Hide future listings from one seller for a chat."""
+        seller_name = seller_name.strip()
+        if not seller_name:
+            return
+        seller_key = _seller_key(seller_name)
+        with self._session_factory() as session:
+            self._ensure_chat(session, chat_id)
+            row = session.scalar(
+                select(BannedSellerRow).where(
+                    BannedSellerRow.chat_id == chat_id,
+                    BannedSellerRow.source == source,
+                    BannedSellerRow.seller_key == seller_key,
+                )
+            )
+            if row is None:
+                session.add(
+                    BannedSellerRow(
+                        chat_id=chat_id,
+                        source=source,
+                        seller_name=seller_name,
+                        seller_key=seller_key,
+                    )
+                )
+            else:
+                row.seller_name = seller_name
+            session.commit()
+
+    def unban_seller(self, chat_id: int, banned_seller_id: int) -> None:
+        """Remove one seller from a chat blacklist."""
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(BannedSellerRow).where(
+                    BannedSellerRow.chat_id == chat_id,
+                    BannedSellerRow.id == banned_seller_id,
+                )
+            )
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    def is_seller_banned(
+        self,
+        chat_id: int,
+        source: str,
+        seller_name: str | None,
+    ) -> bool:
+        """Return whether one listing seller is hidden by the chat."""
+        if not seller_name:
+            return False
+        with self._session_factory() as session:
+            return (
+                session.scalar(
+                    select(BannedSellerRow.id).where(
+                        BannedSellerRow.chat_id == chat_id,
+                        BannedSellerRow.source == source,
+                        BannedSellerRow.seller_key == _seller_key(seller_name),
+                    )
+                )
+                is not None
+            )
 
     def mark_seen(self, chat_id: int, ad_ids: list[int]) -> None:
         """Insert seen listing ids using a unique key to prevent duplicates."""
@@ -778,6 +891,11 @@ def _unique_listing_keys(listing_keys: list[ListingKey]) -> list[ListingKey]:
     return list(
         dict.fromkeys((str(source), int(ad_id)) for source, ad_id in listing_keys)
     )
+
+
+def _seller_key(seller_name: str) -> str:
+    """Normalize seller names for blacklist matching."""
+    return " ".join(seller_name.casefold().split())
 
 
 def _datetime_to_db(value: datetime | None) -> datetime | None:

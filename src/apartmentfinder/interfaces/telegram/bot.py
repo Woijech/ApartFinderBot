@@ -110,6 +110,7 @@ CALLBACK_SEARCHES = "menu:searches"
 CALLBACK_NEW_SEARCH = "subscription:new"
 CALLBACK_HELP = "menu:help"
 CALLBACK_HISTORY = "menu:history"
+CALLBACK_BANNED = "menu:banned"
 CALLBACK_FILTERS = "menu:filters"
 CALLBACK_TYPE = "filter:type"
 CALLBACK_PRICE = "filter:price"
@@ -280,6 +281,56 @@ async def history_menu(callback: CallbackQuery) -> None:
         disable_web_page_preview=True,
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == CALLBACK_BANNED)
+async def banned_sellers_menu(callback: CallbackQuery) -> None:
+    """Show sellers hidden by this chat."""
+    ensure_default_profile(callback.message.chat.id)
+    await edit_or_answer(
+        callback.message,
+        banned_sellers_text(callback.message.chat.id),
+        reply_markup=banned_sellers_keyboard(callback.message.chat.id),
+        disable_web_page_preview=True,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ban:"))
+async def ban_seller_callback(callback: CallbackQuery) -> None:
+    """Hide future listings from a seller shown in a listing notification."""
+    _prefix, source, ad_id_text = callback.data.split(":", maxsplit=2)
+    listing = storage.history_listing_by_key(
+        callback.message.chat.id,
+        source,
+        int(ad_id_text),
+    )
+    if listing is None or not listing.seller_name:
+        await callback.answer(
+            "Не смог определить продавца для этого объявления",
+            show_alert=True,
+        )
+        return
+    storage.ban_seller(callback.message.chat.id, listing.source, listing.seller_name)
+    await callback.answer("Продавец добавлен в чёрный список", show_alert=True)
+    await callback.message.answer(
+        banned_sellers_text(callback.message.chat.id),
+        reply_markup=banned_sellers_keyboard(callback.message.chat.id),
+        disable_web_page_preview=True,
+    )
+
+
+@router.callback_query(F.data.startswith("unban:"))
+async def unban_seller_callback(callback: CallbackQuery) -> None:
+    """Remove one seller from blacklist."""
+    banned_seller_id = int(callback.data.rsplit(":", maxsplit=1)[-1])
+    storage.unban_seller(callback.message.chat.id, banned_seller_id)
+    await callback.message.edit_text(
+        banned_sellers_text(callback.message.chat.id),
+        reply_markup=banned_sellers_keyboard(callback.message.chat.id),
+        disable_web_page_preview=True,
+    )
+    await callback.answer("Продавец удалён из чёрного списка")
 
 
 @router.callback_query(F.data == CALLBACK_HELP)
@@ -633,6 +684,11 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
         listing
         for listing in after_watch_start
         if listing_matches_search_filters(listing, profile.request)
+        and not storage.is_seller_banned(
+            profile.chat_id,
+            listing.source,
+            listing.seller_name,
+        )
     )
     save_matching_listing_history(profile, fresh_listings)
     unseen_keys = set(
@@ -684,6 +740,11 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
         listing
         for listing in enriched
         if listing_matches_search_filters(listing, profile.request)
+        and not storage.is_seller_banned(
+            profile.chat_id,
+            listing.source,
+            listing.seller_name,
+        )
     ]
     for listing in matched_enriched:
         logger.info(
@@ -771,6 +832,11 @@ def save_matching_listing_history(
         listing
         for listing in listings
         if listing_matches_search_filters(listing, profile.request)
+        and not storage.is_seller_banned(
+            profile.chat_id,
+            listing.source,
+            listing.seller_name,
+        )
     ]
     storage.save_listing_history_for_subscription(profile.id, matching, limit=50)
 
@@ -830,7 +896,7 @@ async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
             chat_id,
             presentation.image_urls[0],
             caption=presentation.caption,
-            reply_markup=listing_navigation_keyboard(),
+            reply_markup=listing_navigation_keyboard(listing),
         )
         if len(presentation.image_urls) == 1:
             return
@@ -842,7 +908,7 @@ async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
     await bot.send_message(
         chat_id,
         presentation.caption,
-        reply_markup=listing_navigation_keyboard(),
+        reply_markup=listing_navigation_keyboard(listing),
         disable_web_page_preview=True,
     )
 
@@ -1033,6 +1099,12 @@ def main_menu_keyboard(_profile: UserProfile | None = None) -> InlineKeyboardMar
             ],
             [
                 InlineKeyboardButton(
+                    text="🚫 Забаненные продавцы",
+                    callback_data=CALLBACK_BANNED,
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="➕ Создать поиск",
                     callback_data=CALLBACK_NEW_SEARCH,
                 )
@@ -1193,6 +1265,18 @@ def old_listing_keyboard(subscription: UserProfile, index: int) -> InlineKeyboar
         )
     if nav:
         rows.append(nav)
+    listing = None
+    if subscription.id is not None:
+        listing = storage.history_listing_for_subscription(subscription.id, index)
+    if listing is not None and listing.seller_name:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🚫 Не показывать продавца",
+                    callback_data=f"ban:{listing.source}:{listing.ad_id}",
+                )
+            ]
+        )
     rows.extend(
         [
             [
@@ -1203,19 +1287,33 @@ def old_listing_keyboard(subscription: UserProfile, index: int) -> InlineKeyboar
                     ),
                 )
             ],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Главное меню",
+                    callback_data=CALLBACK_MAIN,
+                )
+            ],
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def listing_navigation_keyboard() -> InlineKeyboardMarkup:
+def listing_navigation_keyboard(listing: Listing) -> InlineKeyboardMarkup:
     """Build navigation attached to each sent listing notification."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)]
-        ]
+    rows = []
+    if listing.seller_name:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🚫 Не показывать продавца",
+                    callback_data=f"ban:{listing.source}:{listing.ad_id}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def subscription_filter_keyboard(subscription: UserProfile) -> InlineKeyboardMarkup:
@@ -1499,6 +1597,40 @@ def old_listing_text(subscription: UserProfile, index: int) -> str:
         f"🕘 <b>Старое объявление {index + 1}/{total}</b>\n\n"
         f"{presentation.caption}"
     )
+
+
+def banned_sellers_text(chat_id: int) -> str:
+    """Format the seller blacklist screen."""
+    sellers = storage.list_banned_sellers(chat_id)
+    lines = ["🚫 <b>Забаненные продавцы</b>", ""]
+    if not sellers:
+        lines.append(
+            "Список пуст. Под объявлением появится кнопка блокировки продавца."
+        )
+        return "\n".join(lines)
+    lines.append("Объявления от этих продавцов больше не будут приходить:")
+    lines.append("")
+    for index, seller in enumerate(sellers, start=1):
+        source = {"kufar": "Kufar", "realt": "Realt"}.get(seller.source, seller.source)
+        lines.append(f"{index}. {escape(seller.seller_name)} · {escape(source)}")
+    return "\n".join(lines)
+
+
+def banned_sellers_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Build controls for removing sellers from blacklist."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"✅ Убрать: {seller.seller_name[:32]}",
+                callback_data=f"unban:{seller.id}",
+            )
+        ]
+        for seller in storage.list_banned_sellers(chat_id)
+    ]
+    rows.append(
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data=CALLBACK_MAIN)]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def listing_history_url(source: str, ad_id: int, request: SearchRequest) -> str:

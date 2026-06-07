@@ -7,6 +7,7 @@ from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.persistence.storage import UserProfile
 from apartmentfinder.interfaces.telegram.bot import (
     listing_history_url,
+    listing_navigation_keyboard,
     parse_keywords,
     parse_price_range_text,
 )
@@ -163,3 +164,34 @@ def test_listing_history_url_uses_public_realt_object_paths() -> None:
     assert listing_history_url("kufar", 123, flat_request) == (
         "https://re.kufar.by/vi/123"
     )
+
+
+def test_listing_navigation_keyboard_includes_seller_ban_when_known() -> None:
+    listing = Listing(
+        ad_id=123,
+        title="Квартира",
+        url="https://example.test/123",
+        source="realt",
+        seller_name="Агентство",
+    )
+
+    keyboard = listing_navigation_keyboard(listing)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert any(button.callback_data == "ban:realt:123" for button in buttons)
+    assert any(button.callback_data == "menu:main" for button in buttons)
+
+
+def test_listing_navigation_keyboard_skips_seller_ban_without_name() -> None:
+    listing = Listing(
+        ad_id=123,
+        title="Квартира",
+        url="https://example.test/123",
+        source="realt",
+    )
+
+    keyboard = listing_navigation_keyboard(listing)
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+
+    assert not any(button.callback_data == "ban:realt:123" for button in buttons)
+    assert any(button.callback_data == "menu:main" for button in buttons)

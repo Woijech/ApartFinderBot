@@ -51,6 +51,10 @@ class ChatRow(Base):
         back_populates="chat",
         cascade="all, delete-orphan",
     )
+    banned_sellers: Mapped[list[BannedSellerRow]] = relationship(
+        back_populates="chat",
+        cascade="all, delete-orphan",
+    )
 
 
 class SubscriptionRow(Base):
@@ -97,7 +101,6 @@ class SubscriptionRow(Base):
         back_populates="subscription",
         cascade="all, delete-orphan",
     )
-
 
 class SeenAdRow(Base):
     """One listing already seen by one subscription."""
@@ -198,3 +201,34 @@ class ListingHistoryRow(Base):
     subscription: Mapped[SubscriptionRow] = relationship(
         back_populates="listing_history"
     )
+
+
+class BannedSellerRow(Base):
+    """One seller hidden by a Telegram chat."""
+
+    __tablename__ = "banned_sellers"
+    __table_args__ = (
+        UniqueConstraint(
+            "chat_id",
+            "source",
+            "seller_key",
+            name="uq_banned_sellers_chat_source_seller",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("chats.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    seller_name: Mapped[str] = mapped_column(String(240), nullable=False)
+    seller_key: Mapped[str] = mapped_column(String(260), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    chat: Mapped[ChatRow] = relationship(back_populates="banned_sellers")
