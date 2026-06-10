@@ -255,7 +255,7 @@ def test_listing_navigation_keyboard_skips_seller_ban_without_name() -> None:
     assert any(button.callback_data == "menu:main" for button in buttons)
 
 
-def test_send_listing_keeps_multiple_images_in_one_album() -> None:
+def test_send_listing_keeps_actions_attached_to_photo_card() -> None:
     listing = Listing(
         ad_id=123,
         title="Квартира",
@@ -270,17 +270,11 @@ def test_send_listing_keeps_multiple_images_in_one_album() -> None:
 
     asyncio.run(send_listing(bot, 123, listing))
 
-    assert bot.photos == []
-    assert len(bot.media_groups) == 1
-    assert [item.media for item in bot.media_groups[0]] == [
-        "https://img.test/1.jpg",
-        "https://img.test/2.jpg",
-        "https://img.test/3.jpg",
-    ]
-    assert bot.media_groups[0][0].caption
-    assert bot.media_groups[0][1].caption is None
-    assert bot.media_groups[0][2].caption is None
-    assert bot.messages[0]["args"][1] == "Действия с объявлением:"
+    assert bot.media_groups == []
+    assert bot.messages == []
+    assert bot.photos[0]["args"] == (123, "https://img.test/1.jpg")
+    assert bot.photos[0]["kwargs"]["caption"]
+    assert bot.photos[0]["kwargs"]["reply_markup"] is not None
 
 
 def test_send_old_listing_includes_image_when_history_snapshot_has_photo(

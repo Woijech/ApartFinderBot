@@ -43,7 +43,8 @@ def test_build_listing_presentation_without_images_uses_message_limit() -> None:
     assert presentation.image_urls == []
     assert presentation.details is None
     assert len(presentation.caption) <= 4096
-    assert presentation.caption.endswith("...")
+    assert "..." in presentation.caption
+    assert presentation.caption.endswith("🔗 <b>Объявление:</b> https://re.kufar.by/vi/2")
 
 
 def test_build_listing_presentation_with_images_uses_caption_limit() -> None:
@@ -60,4 +61,21 @@ def test_build_listing_presentation_with_images_uses_caption_limit() -> None:
 
     assert presentation.image_urls == ["https://example.test/3.jpg"]
     assert len(presentation.caption) <= 1024
-    assert presentation.caption.endswith("...")
+    assert "..." in presentation.caption
+
+
+def test_build_listing_presentation_trims_description_before_listing_url() -> None:
+    listing = Listing(
+        ad_id=4,
+        title="Комната с очень длинным описанием",
+        url="https://re.kufar.by/vi/4",
+        description="Очень длинное описание. " * 200,
+        images=[ListingImage(gallery_url="https://example.test/4.jpg")],
+        price_usd=200,
+    )
+
+    presentation = build_listing_presentation(listing, max_images=1)
+
+    assert len(presentation.caption) <= 1024
+    assert "..." in presentation.caption
+    assert presentation.caption.endswith("🔗 <b>Объявление:</b> https://re.kufar.by/vi/4")

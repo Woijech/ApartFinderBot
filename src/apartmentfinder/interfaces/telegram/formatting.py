@@ -17,6 +17,7 @@ from apartmentfinder.infrastructure.config import settings
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_CAPTION_LIMIT = 1024
+TELEGRAM_TRIM_SUFFIX = "\n..."
 SOURCE_LABELS = {"kufar": "Kufar", "realt": "Realt"}
 
 
@@ -34,33 +35,52 @@ def build_listing_presentation(
     max_images: int,
 ) -> ListingPresentation:
     """Build a beautiful, Telegram-safe presentation for one listing."""
-    header = listing_header(listing)
-    facts = listing_facts(listing)
-    description = full_description(listing)
-    url = listing_url(listing)
     image_urls = [image.gallery_url for image in listing.images[:max_images]]
-    text_parts = [header]
-    if facts:
-        text_parts.append(facts)
-    if description:
-        text_parts.append(description_message(description))
-    text_parts.append(url)
+    caption_limit = TELEGRAM_CAPTION_LIMIT if image_urls else TELEGRAM_MESSAGE_LIMIT
+    caption = listing_message_text(listing, caption_limit)
 
     if image_urls:
         return ListingPresentation(
-            caption=trim_for_telegram(
-                "\n\n".join(text_parts),
-                TELEGRAM_CAPTION_LIMIT,
-            ),
+            caption=caption,
             details=None,
             image_urls=image_urls,
         )
 
     return ListingPresentation(
-        caption=trim_for_telegram("\n\n".join(text_parts), TELEGRAM_MESSAGE_LIMIT),
+        caption=caption,
         details=None,
         image_urls=[],
     )
+
+
+def listing_message_text(listing: Listing, limit: int) -> str:
+    """Build listing text while trimming only description when space is tight."""
+    header = listing_header(listing)
+    facts = listing_facts(listing)
+    description = full_description(listing)
+    url = listing_url(listing)
+
+    fixed_parts = [header]
+    if facts:
+        fixed_parts.append(facts)
+    fixed_parts.append(url)
+
+    if not description:
+        return trim_for_telegram("\n\n".join(fixed_parts), limit)
+
+    separator = "\n\n"
+    description_prefix = "📝 <b>Описание:</b>\n"
+    fixed_length = len(separator.join(fixed_parts))
+    description_overhead = len(separator) * 2 + len(description_prefix)
+    description_limit = limit - fixed_length - description_overhead
+    if description_limit <= len(TELEGRAM_TRIM_SUFFIX):
+        return trim_for_telegram("\n\n".join(fixed_parts), limit)
+
+    description_block = (
+        description_prefix + trim_escaped_text(description, description_limit)
+    )
+    text_parts = fixed_parts[:-1] + [description_block, url]
+    return trim_for_telegram("\n\n".join(text_parts), limit)
 
 
 def listing_header(listing: Listing) -> str:
@@ -137,5 +157,22 @@ def trim_for_telegram(text: str, limit: int) -> str:
     """Trim text to a Telegram API limit without cutting too aggressively."""
     if len(text) <= limit:
         return text
-    suffix = "\n..."
-    return text[: limit - len(suffix)].rstrip() + suffix
+    return text[: limit - len(TELEGRAM_TRIM_SUFFIX)].rstrip() + TELEGRAM_TRIM_SUFFIX
+
+
+def trim_escaped_text(text: str, limit: int) -> str:
+    """Escape text and trim without cutting HTML entities in the middle."""
+    escaped = escape(text)
+    if len(escaped) <= limit:
+        return escaped
+
+    parts: list[str] = []
+    length = 0
+    content_limit = limit - len(TELEGRAM_TRIM_SUFFIX)
+    for character in text:
+        escaped_character = escape(character)
+        if length + len(escaped_character) > content_limit:
+            break
+        parts.append(escaped_character)
+        length += len(escaped_character)
+    return "".join(parts).rstrip() + TELEGRAM_TRIM_SUFFIX

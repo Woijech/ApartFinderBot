@@ -1,6 +1,6 @@
 """Order listing history by listing publication time.
 
-Revision ID: 0006_listing_history_published_at
+Revision ID: 0006_history_published_at
 Revises: 0005_favorite_listings
 Create Date: 2026-06-07 00:00:00.000000
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0006_listing_history_published_at"
+revision = "0006_history_published_at"
 down_revision = "0005_favorite_listings"
 branch_labels = None
 depends_on = None

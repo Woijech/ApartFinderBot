@@ -26,7 +26,6 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
     Message,
     TelegramObject,
 )
@@ -52,7 +51,6 @@ from apartmentfinder.infrastructure.source_registry import (
 from apartmentfinder.interfaces.telegram.formatting import (
     TELEGRAM_CAPTION_LIMIT,
     TELEGRAM_MESSAGE_LIMIT,
-    ListingPresentation,
     build_listing_presentation,
     trim_for_telegram,
 )
@@ -948,21 +946,10 @@ async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
         max_images=settings.bot_max_images,
     )
     if presentation.image_urls:
-        if len(presentation.image_urls) == 1:
-            await bot.send_photo(
-                chat_id,
-                presentation.image_urls[0],
-                caption=presentation.caption,
-                reply_markup=listing_navigation_keyboard(listing),
-            )
-            return
-        await bot.send_media_group(
+        await bot.send_photo(
             chat_id,
-            media_group_from_presentation(presentation),
-        )
-        await bot.send_message(
-            chat_id,
-            "Действия с объявлением:",
+            presentation.image_urls[0],
+            caption=presentation.caption,
             reply_markup=listing_navigation_keyboard(listing),
         )
         return
@@ -1060,19 +1047,6 @@ async def edit_or_answer(
         reply_markup=reply_markup,
         disable_web_page_preview=disable_web_page_preview,
     )
-
-
-def media_group_from_presentation(
-    presentation: ListingPresentation,
-) -> list[InputMediaPhoto]:
-    """Build a Telegram album with a caption only on the first photo."""
-    return [
-        InputMediaPhoto(
-            media=url,
-            caption=presentation.caption if index == 0 else None,
-        )
-        for index, url in enumerate(presentation.image_urls)
-    ]
 
 
 def ensure_default_profile(chat_id: int) -> UserProfile:
