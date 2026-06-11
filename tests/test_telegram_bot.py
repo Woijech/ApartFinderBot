@@ -3,6 +3,8 @@ import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from apartmentfinder.application.filtering import listing_matches_search_filters
 from apartmentfinder.application.monitoring import listings_after_watch_start
 from apartmentfinder.domain.models import Listing, ListingImage, SearchRequest
@@ -13,6 +15,7 @@ from apartmentfinder.interfaces.telegram.bot import (
     history_keyboard,
     listing_history_url,
     listing_navigation_keyboard,
+    notifier_loop,
     notify_profile,
     parse_keywords,
     parse_price_range_text,
@@ -277,6 +280,28 @@ def test_send_listing_keeps_actions_attached_to_photo_card() -> None:
     assert bot.photos[0]["kwargs"]["reply_markup"] is not None
 
 
+def test_send_listing_logs_and_reraises_photo_failure(caplog) -> None:
+    class FailingBot:
+        async def send_photo(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("telegram failed")
+
+    listing = Listing(
+        ad_id=123,
+        title="Квартира",
+        url="https://example.test/123",
+        source="realt",
+        images=[ListingImage(gallery_url="https://img.test/1.jpg")],
+    )
+
+    with caplog.at_level(logging.ERROR, logger="apartmentfinder.interfaces.telegram"):
+        with pytest.raises(RuntimeError, match="telegram failed"):
+            asyncio.run(send_listing(FailingBot(), 123, listing))
+
+    assert "listing_send_failed chat_id=123 source=realt ad_id=123" in caplog.text
+    assert "url=https://example.test/123" in caplog.text
+    assert "has_image_urls=True send_type=photo" in caplog.text
+
+
 def test_send_old_listing_includes_image_when_history_snapshot_has_photo(
     monkeypatch,
 ) -> None:
@@ -377,6 +402,7 @@ def test_enable_subscription_watch_does_not_save_current_listings_to_history(
 
 def test_notify_profile_saves_only_unnotified_new_listings_to_history(
     monkeypatch,
+    caplog,
 ) -> None:
     started_at = datetime(2026, 5, 7, 12, 0, tzinfo=UTC)
     listings = [
@@ -446,11 +472,61 @@ def test_notify_profile_saves_only_unnotified_new_listings_to_history(
 
     profile = UserProfile(chat_id=123, id=1, watch_started_at=started_at)
 
-    asyncio.run(notify_profile(object(), profile))
+    with caplog.at_level(logging.INFO, logger="apartmentfinder.interfaces.telegram"):
+        asyncio.run(notify_profile(object(), profile))
 
     assert sent_ids == [2, 1]
+    assert "listing_notification_sent chat_id=123 subscription_id=1" in caplog.text
+    assert "source=kufar ad_id=2" in caplog.text
+    assert "source=kufar ad_id=1" in caplog.text
     assert [[listing.ad_id for listing in items] for items in saved_history] == [[3, 4]]
     assert marked_seen == [listings]
+
+
+def test_notifier_loop_logs_profile_failure_and_continues(
+    monkeypatch,
+    caplog,
+) -> None:
+    profiles = [
+        UserProfile(chat_id=123, id=1, request=SearchRequest(property_type="flat")),
+        UserProfile(chat_id=123, id=2, request=SearchRequest(property_type="room")),
+    ]
+    checked_profile_ids: list[int | None] = []
+    sleep_calls = 0
+
+    async def fake_sleep_or_stop(
+        stop_event: asyncio.Event,
+        delay_seconds: float,
+    ) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            stop_event.set()
+
+    async def fake_notify_profile(bot: object, profile: UserProfile) -> None:
+        checked_profile_ids.append(profile.id)
+        if profile.id == 1:
+            raise RuntimeError("profile failed")
+
+    fake_storage = SimpleNamespace(all_enabled=lambda: profiles)
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    monkeypatch.setattr(telegram_bot, "sleep_or_stop", fake_sleep_or_stop)
+    monkeypatch.setattr(telegram_bot, "notify_profile", fake_notify_profile)
+    monkeypatch.setattr(
+        telegram_bot,
+        "settings",
+        SimpleNamespace(
+            bot_initial_poll_delay_seconds=0,
+            bot_poll_interval_seconds=1,
+        ),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="apartmentfinder.interfaces.telegram"):
+        asyncio.run(notifier_loop(object(), asyncio.Event()))
+
+    assert checked_profile_ids == [1, 2]
+    assert "profile_notification_check_failed chat_id=123" in caplog.text
+    assert "subscription_id=1 property_type=flat" in caplog.text
 
 
 def test_history_keyboard_opens_old_listing_view_when_history_exists(

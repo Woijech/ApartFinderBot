@@ -198,6 +198,14 @@ async def text_input(message: Message) -> None:
         return
     subscription_id, action = pending
     subscription = storage.get_subscription(message.chat.id, subscription_id)
+    logger.info(
+        "text_filter_input_received chat_id=%s subscription_id=%s action=%s "
+        "text_length=%s",
+        message.chat.id,
+        subscription_id,
+        action,
+        len(message.text or ""),
+    )
     try:
         subscription.request = apply_text_input(
             subscription.request,
@@ -205,6 +213,14 @@ async def text_input(message: Message) -> None:
             message.text or "",
         )
     except ValueError as error:
+        logger.info(
+            "text_filter_input_rejected chat_id=%s subscription_id=%s action=%s "
+            "reason=%s",
+            message.chat.id,
+            subscription_id,
+            action,
+            str(error),
+        )
         await message.answer(
             f"Не понял значение: {escape(str(error))}",
             reply_markup=subscription_filter_keyboard(subscription),
@@ -212,7 +228,23 @@ async def text_input(message: Message) -> None:
         return
     restart_subscription_watch(subscription)
     storage.reset_seen_for_subscription(subscription.id)
+    logger.info(
+        "seen_ids_reset chat_id=%s subscription_id=%s reason=text_filter_changed "
+        "action=%s",
+        subscription.chat_id,
+        subscription.id,
+        action,
+    )
     storage.update_subscription(subscription)
+    logger.info(
+        "text_filter_changed chat_id=%s subscription_id=%s action=%s "
+        "property_type=%s enabled=%s",
+        subscription.chat_id,
+        subscription.id,
+        action,
+        subscription.request.property_type,
+        subscription.enabled,
+    )
     await message.answer(
         "✅ Фильтр сохранён.\n\n" + subscription_text(subscription),
         reply_markup=subscription_keyboard(subscription),
@@ -455,12 +487,24 @@ async def subscription_callback(callback: CallbackQuery) -> None:
         await callback.answer("Поиск удалён")
         return
     if action == "watch_on":
+        logger.info(
+            "watch_enable_requested chat_id=%s subscription_id=%s property_type=%s",
+            subscription.chat_id,
+            subscription.id,
+            subscription.request.property_type,
+        )
         await enable_subscription_watch(callback, subscription)
         return
     if action == "watch_off":
         subscription.enabled = False
         subscription.watch_started_at = None
         storage.update_subscription(subscription)
+        logger.info(
+            "watch_disabled chat_id=%s subscription_id=%s property_type=%s",
+            subscription.chat_id,
+            subscription.id,
+            subscription.request.property_type,
+        )
         await callback.message.edit_text(
             "⏸ <b>Слежение выключено</b>\n\n" + subscription_text(subscription),
             reply_markup=subscription_keyboard(subscription),
@@ -478,6 +522,12 @@ async def subscription_callback(callback: CallbackQuery) -> None:
         return
     if action in {"include", "exclude", "custom_price"}:
         pending_text_inputs[callback.message.chat.id] = (subscription.id, action)
+        logger.info(
+            "text_filter_input_requested chat_id=%s subscription_id=%s action=%s",
+            subscription.chat_id,
+            subscription.id,
+            action,
+        )
         await callback.message.edit_text(
             text_input_prompt(action),
             reply_markup=InlineKeyboardMarkup(
@@ -497,7 +547,25 @@ async def subscription_callback(callback: CallbackQuery) -> None:
         apply_option_value(subscription, action, value)
         restart_subscription_watch(subscription)
         storage.reset_seen_for_subscription(subscription.id)
+        logger.info(
+            "seen_ids_reset chat_id=%s subscription_id=%s reason=inline_filter_changed "
+            "action=%s value=%s",
+            subscription.chat_id,
+            subscription.id,
+            action,
+            value,
+        )
         storage.update_subscription(subscription)
+        logger.info(
+            "filter_changed chat_id=%s subscription_id=%s action=%s value=%s "
+            "property_type=%s enabled=%s",
+            subscription.chat_id,
+            subscription.id,
+            action,
+            value,
+            subscription.request.property_type,
+            subscription.enabled,
+        )
         await callback.message.edit_text(
             subscription_filters_text(subscription),
             reply_markup=subscription_filter_keyboard(subscription),
@@ -541,7 +609,23 @@ async def set_property_type(callback: CallbackQuery) -> None:
     profile.watch_started_at = datetime.now(UTC) if profile.enabled else None
     storage.reset_seen(profile.chat_id)
     profile.seen_ids = []
+    logger.info(
+        "seen_ids_reset chat_id=%s subscription_id=%s reason=property_type_changed "
+        "value=%s",
+        profile.chat_id,
+        profile.id,
+        target_code,
+    )
     storage.update(profile)
+    logger.info(
+        "filter_changed chat_id=%s subscription_id=%s action=set_type value=%s "
+        "property_type=%s enabled=%s",
+        profile.chat_id,
+        profile.id,
+        target_code,
+        profile.request.property_type,
+        profile.enabled,
+    )
     await callback.message.edit_text(
         filters_menu_text(profile),
         reply_markup=filters_keyboard(),
@@ -575,7 +659,23 @@ async def set_price(callback: CallbackQuery) -> None:
     profile.watch_started_at = datetime.now(UTC) if profile.enabled else None
     storage.reset_seen(profile.chat_id)
     profile.seen_ids = []
+    logger.info(
+        "seen_ids_reset chat_id=%s subscription_id=%s reason=price_changed "
+        "value=%s",
+        profile.chat_id,
+        profile.id,
+        code,
+    )
     storage.update(profile)
+    logger.info(
+        "filter_changed chat_id=%s subscription_id=%s action=set_price value=%s "
+        "property_type=%s enabled=%s",
+        profile.chat_id,
+        profile.id,
+        code,
+        profile.request.property_type,
+        profile.enabled,
+    )
     await callback.message.edit_text(
         filters_menu_text(profile),
         reply_markup=filters_keyboard(),
@@ -600,6 +700,12 @@ async def settings_callback(callback: CallbackQuery) -> None:
 async def watch_on_callback(callback: CallbackQuery) -> None:
     """Enable monitoring and remember current listings as already seen."""
     profile = ensure_default_profile(callback.message.chat.id)
+    logger.info(
+        "watch_enable_requested chat_id=%s subscription_id=%s property_type=%s",
+        profile.chat_id,
+        profile.id,
+        profile.request.property_type,
+    )
     await callback.answer("Включаю слежение...")
     await enable_subscription_watch(callback, profile)
 
@@ -613,9 +719,11 @@ async def enable_subscription_watch(
         listings = await run_profile_check(profile, lambda: fetch_listings(profile))
     except SourceNetworkError:
         logger.warning(
-            "watch_enable_failed_sources_unavailable chat_id=%s subscription_id=%s",
+            "watch_enable_failed_sources_unavailable chat_id=%s subscription_id=%s "
+            "property_type=%s",
             profile.chat_id,
             profile.id,
+            profile.request.property_type,
         )
         await callback.message.answer(
             "Не смог проверить источники перед включением слежения. "
@@ -624,6 +732,13 @@ async def enable_subscription_watch(
         )
         return
     except ProfileCheckAlreadyRunning:
+        logger.info(
+            "watch_enable_skipped_profile_check_running chat_id=%s "
+            "subscription_id=%s property_type=%s",
+            profile.chat_id,
+            profile.id,
+            profile.request.property_type,
+        )
         await callback.message.answer(
             "Сейчас уже идёт проверка объявлений. "
             "Попробуй включить слежение через пару секунд.",
@@ -635,9 +750,11 @@ async def enable_subscription_watch(
     mark_subscription_seen(profile, listings)
     storage.update_subscription(profile)
     logger.info(
-        "watch_enabled_seeded_seen chat_id=%s subscription_id=%s seen_count=%s",
+        "watch_enabled_seeded_seen chat_id=%s subscription_id=%s property_type=%s "
+        "seen_count=%s",
         profile.chat_id,
         profile.id,
+        profile.request.property_type,
         len(listings),
     )
     await callback.message.edit_text(
@@ -655,6 +772,12 @@ async def watch_off_callback(callback: CallbackQuery) -> None:
     profile.enabled = False
     profile.watch_started_at = None
     storage.update(profile)
+    logger.info(
+        "watch_disabled chat_id=%s subscription_id=%s property_type=%s",
+        profile.chat_id,
+        profile.id,
+        profile.request.property_type,
+    )
     await callback.message.edit_text(
         "⏸ <b>Слежение выключено</b>\n\n"
         "Фильтры сохранены, можно включить уведомления обратно в любой момент.",
@@ -677,7 +800,16 @@ async def notifier_loop(bot: Bot, stop_event: asyncio.Event) -> None:
         for profile in enabled_profiles:
             if stop_event.is_set():
                 break
-            await notify_profile(bot, profile)
+            try:
+                await notify_profile(bot, profile)
+            except Exception:
+                logger.exception(
+                    "profile_notification_check_failed chat_id=%s "
+                    "subscription_id=%s property_type=%s",
+                    profile.chat_id,
+                    profile.id,
+                    profile.request.property_type,
+                )
         await sleep_or_stop(stop_event, settings.bot_poll_interval_seconds)
 
 
@@ -810,6 +942,14 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
             listing.ad_id,
         )
         await send_listing(bot, profile.chat_id, listing)
+        logger.info(
+            "listing_notification_sent chat_id=%s subscription_id=%s source=%s "
+            "ad_id=%s",
+            profile.chat_id,
+            profile.id,
+            listing.source,
+            listing.ad_id,
+        )
         if profile.id is not None:
             storage.log_notification_for_subscription(
                 profile.id,
@@ -945,20 +1085,34 @@ async def send_listing(bot: Bot, chat_id: int, listing: Listing) -> None:
         listing,
         max_images=settings.bot_max_images,
     )
-    if presentation.image_urls:
-        await bot.send_photo(
+    send_type = "photo" if presentation.image_urls else "message"
+    try:
+        if presentation.image_urls:
+            await bot.send_photo(
+                chat_id,
+                presentation.image_urls[0],
+                caption=presentation.caption,
+                reply_markup=listing_navigation_keyboard(listing),
+            )
+            return
+        await bot.send_message(
             chat_id,
-            presentation.image_urls[0],
-            caption=presentation.caption,
+            presentation.caption,
             reply_markup=listing_navigation_keyboard(listing),
+            disable_web_page_preview=True,
         )
-        return
-    await bot.send_message(
-        chat_id,
-        presentation.caption,
-        reply_markup=listing_navigation_keyboard(listing),
-        disable_web_page_preview=True,
-    )
+    except Exception:
+        logger.exception(
+            "listing_send_failed chat_id=%s source=%s ad_id=%s url=%s "
+            "has_image_urls=%s send_type=%s",
+            chat_id,
+            listing.source,
+            listing.ad_id,
+            listing.url,
+            bool(presentation.image_urls),
+            send_type,
+        )
+        raise
 
 
 async def send_old_listing(
@@ -2005,7 +2159,7 @@ def main() -> None:
     try:
         asyncio.run(run_bot())
     except RuntimeError as error:
-        print(error)
+        logger.error("bot_start_failed error=%s", error)
         exit(1)
 
 
