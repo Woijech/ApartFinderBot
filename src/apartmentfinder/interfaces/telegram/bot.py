@@ -43,6 +43,7 @@ from apartmentfinder.application.source_registry import (
 )
 from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.config import settings
+from apartmentfinder.infrastructure.health import HealthState, start_health_server
 from apartmentfinder.infrastructure.persistence.storage import BotStorage, UserProfile
 from apartmentfinder.infrastructure.source_registry import (
     configured_source_map,
@@ -105,6 +106,7 @@ class LazyBotStorage:
 
 
 storage = LazyBotStorage()
+worker_health_state: HealthState | None = None
 
 CALLBACK_MAIN = "menu:main"
 CALLBACK_SEARCHES = "menu:searches"
@@ -810,6 +812,8 @@ async def notifier_loop(bot: Bot, stop_event: asyncio.Event) -> None:
                     profile.id,
                     profile.request.property_type,
                 )
+        if worker_health_state is not None:
+            worker_health_state.mark_successful_poll()
         await sleep_or_stop(stop_event, settings.bot_poll_interval_seconds)
 
 
@@ -2125,6 +2129,14 @@ async def run_bot() -> None:
         token=telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    health_server = start_health_server(
+        settings.health_host,
+        settings.bot_health_port,
+        HealthState(
+            role="bot",
+            check_database=storage.check_connection,
+        ),
+    )
     dispatcher = Dispatcher()
     router.message.middleware(AccessMiddleware())
     router.callback_query.middleware(AccessMiddleware())
@@ -2132,6 +2144,7 @@ async def run_bot() -> None:
     try:
         await dispatcher.start_polling(bot)
     finally:
+        health_server.close()
         await bot.session.close()
         storage.close()
 

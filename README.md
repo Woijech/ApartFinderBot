@@ -95,6 +95,10 @@ APARTMENTFINDER_BROWSER_FETCH_ENABLED=false
 APARTMENTFINDER_BROWSER_FETCH_TIMEOUT_SECONDS=20
 APARTMENTFINDER_BROWSER_FETCH_WAIT_UNTIL=networkidle
 APARTMENTFINDER_BROWSER_FETCH_FALLBACK_ON_EMPTY=true
+APARTMENTFINDER_HEALTH_HOST=0.0.0.0
+APARTMENTFINDER_BOT_HEALTH_PORT=8080
+APARTMENTFINDER_WORKER_HEALTH_PORT=8081
+APARTMENTFINDER_READINESS_POLL_MAX_AGE_SECONDS=900
 ```
 
 Tables:
@@ -123,6 +127,27 @@ token is handled as a secret value.
 
 Set `APARTMENTFINDER_ALLOWED_CHAT_IDS` to a comma-separated list of Telegram
 chat ids when the bot should be private.
+
+### Health checks
+
+Both runtime processes expose lightweight operational HTTP endpoints:
+
+- `/health` returns `200` when the process is alive.
+- `/readiness` checks configuration, PostgreSQL, a queue placeholder for future
+  workers, and the worker's last successful polling tick.
+
+Default local endpoints:
+
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/readiness
+curl http://127.0.0.1:8081/health
+curl http://127.0.0.1:8081/readiness
+```
+
+The worker readiness endpoint returns `503` until the first polling cycle
+completes, and later returns `503` if the last successful poll is older than
+`APARTMENTFINDER_READINESS_POLL_MAX_AGE_SECONDS`.
 
 ### Logging
 

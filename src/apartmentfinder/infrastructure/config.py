@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     browser_fetch_timeout_seconds: float = Field(default=20, gt=0)
     browser_fetch_wait_until: str = "networkidle"
     browser_fetch_fallback_on_empty: bool = True
+    health_host: str = "0.0.0.0"
+    bot_health_port: int = Field(default=8080, gt=0, le=65535)
+    worker_health_port: int = Field(default=8081, gt=0, le=65535)
+    readiness_poll_max_age_seconds: float = Field(default=900, gt=0)
 
     @field_validator(
         "kufar_base_url",
@@ -59,6 +63,7 @@ class Settings(BaseSettings):
         "database_url",
         "bot_display_timezone",
         "browser_fetch_wait_until",
+        "health_host",
     )
     @classmethod
     def validate_not_blank(cls, value: str) -> str:

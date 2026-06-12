@@ -76,3 +76,16 @@ def test_settings_rejects_invalid_browser_fetch_timeout() -> None:
     with pytest.raises(ValidationError):
         Settings(browser_fetch_timeout_seconds=0, _env_file=None)
 
+
+def test_settings_reads_healthcheck_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.health_host == "0.0.0.0"
+    assert settings.bot_health_port == 8080
+    assert settings.worker_health_port == 8081
+    assert settings.readiness_poll_max_age_seconds == 900
+
+
+def test_settings_rejects_invalid_health_port() -> None:
+    with pytest.raises(ValidationError):
+        Settings(bot_health_port=0, _env_file=None)

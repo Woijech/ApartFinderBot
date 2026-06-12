@@ -8,6 +8,7 @@ import pytest
 from apartmentfinder.application.filtering import listing_matches_search_filters
 from apartmentfinder.application.monitoring import listings_after_watch_start
 from apartmentfinder.domain.models import Listing, ListingImage, SearchRequest
+from apartmentfinder.infrastructure.health import HealthState
 from apartmentfinder.infrastructure.persistence.storage import UserProfile
 from apartmentfinder.interfaces.telegram import bot as telegram_bot
 from apartmentfinder.interfaces.telegram.bot import (
@@ -601,6 +602,46 @@ def test_notifier_loop_logs_profile_failure_and_continues(
     assert checked_profile_ids == [1, 2]
     assert "profile_notification_check_failed chat_id=123" in caplog.text
     assert "subscription_id=1 property_type=flat" in caplog.text
+
+
+def test_notifier_loop_marks_successful_poll_for_readiness(
+    monkeypatch,
+) -> None:
+    sleep_calls = 0
+    health_state = HealthState(
+        role="worker",
+        check_database=lambda: None,
+        require_recent_poll=True,
+    )
+
+    async def fake_sleep_or_stop(
+        stop_event: asyncio.Event,
+        delay_seconds: float,
+    ) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            stop_event.set()
+
+    fake_storage = SimpleNamespace(all_enabled=lambda: [])
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    monkeypatch.setattr(telegram_bot, "sleep_or_stop", fake_sleep_or_stop)
+    monkeypatch.setattr(telegram_bot, "worker_health_state", health_state)
+    monkeypatch.setattr(
+        telegram_bot,
+        "settings",
+        SimpleNamespace(
+            bot_initial_poll_delay_seconds=0,
+            bot_poll_interval_seconds=1,
+        ),
+    )
+
+    try:
+        asyncio.run(notifier_loop(object(), asyncio.Event()))
+    finally:
+        monkeypatch.setattr(telegram_bot, "worker_health_state", None)
+
+    assert health_state.last_successful_poll_at is not None
 
 
 def test_history_keyboard_opens_old_listing_view_when_history_exists(
