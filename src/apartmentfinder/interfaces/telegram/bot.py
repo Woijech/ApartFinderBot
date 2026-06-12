@@ -16,6 +16,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from html import escape
 from sys import exit
+from time import perf_counter
 from typing import Any, TypeVar
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
@@ -40,10 +41,16 @@ from apartmentfinder.application.source_registry import (
     SourceNetworkError,
     enrich_listing_details,
     fetch_from_sources,
+    source_counts,
 )
 from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.config import settings
 from apartmentfinder.infrastructure.health import HealthState, start_health_server
+from apartmentfinder.infrastructure.metrics import (
+    inc_new_ads_found,
+    inc_notifications_sent,
+    observe_subscription_check_duration,
+)
 from apartmentfinder.infrastructure.persistence.storage import BotStorage, UserProfile
 from apartmentfinder.infrastructure.source_registry import (
     configured_source_map,
@@ -836,15 +843,24 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
         profile.request.property_type,
         profile.enabled,
     )
+    check_started_at = perf_counter()
     try:
         listings = await run_profile_check(
             profile,
             lambda: fetch_listings(profile),
             skip_if_running=True,
         )
+        observe_subscription_check_duration(
+            perf_counter() - check_started_at,
+            property_type=profile.request.property_type,
+        )
     except ProfileCheckAlreadyRunning:
         return
     except SourceNetworkError:
+        observe_subscription_check_duration(
+            perf_counter() - check_started_at,
+            property_type=profile.request.property_type,
+        )
         logger.warning(
             "listing_check_failed chat_id=%s subscription_id=%s duration_ms=%s",
             profile.chat_id,
@@ -887,6 +903,8 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
     new_listings = [
         listing for listing in fresh_listings if listing_key(listing) in unseen_keys
     ]
+    for source, count in source_counts(new_listings).items():
+        inc_new_ads_found(count, source=source)
     logger.info(
         "listing_check_counts chat_id=%s subscription_id=%s total=%s "
         "after_watch_start=%s matched_filters=%s unseen=%s limit=%s",
@@ -945,6 +963,7 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
             listing.ad_id,
         )
         await send_listing(bot, profile.chat_id, listing)
+        inc_notifications_sent(source=listing.source)
         logger.info(
             "listing_notification_sent chat_id=%s subscription_id=%s source=%s "
             "ad_id=%s",

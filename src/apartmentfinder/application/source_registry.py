@@ -7,6 +7,11 @@ from time import perf_counter
 
 from apartmentfinder.application.ports import ListingSource
 from apartmentfinder.domain.models import Listing, SearchRequest
+from apartmentfinder.infrastructure.metrics import (
+    inc_empty_result,
+    inc_source_error,
+    observe_source_response_time,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +52,12 @@ def fetch_from_sources(
                 ),
             )
             listings.extend(source_listings)
+            observe_source_response_time(
+                (perf_counter() - started_at),
+                source=source.code,
+            )
+            if not source_listings:
+                inc_empty_result(source=source.code)
             logger.info(
                 "listing_source_check_finished source=%s count=%s duration_ms=%s",
                 source.code,
@@ -62,6 +73,7 @@ def fetch_from_sources(
                 error,
                 elapsed_ms(started_at),
             )
+            inc_source_error(source=source.code, error_type=type(error).__name__)
             failures.append(error)
         finally:
             source.close()

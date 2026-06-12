@@ -135,14 +135,19 @@ Both runtime processes expose lightweight operational HTTP endpoints:
 - `/health` returns `200` when the process is alive.
 - `/readiness` checks configuration, PostgreSQL, a queue placeholder for future
   workers, and the worker's last successful polling tick.
+- `/metrics` exposes Prometheus-compatible counters and histograms for
+  subscription checks, source responses, new ads, source errors, notifications,
+  and empty source results.
 
 Default local endpoints:
 
 ```bash
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/readiness
+curl http://127.0.0.1:8080/metrics
 curl http://127.0.0.1:8081/health
 curl http://127.0.0.1:8081/readiness
+curl http://127.0.0.1:8081/metrics
 ```
 
 The worker readiness endpoint returns `503` until the first polling cycle

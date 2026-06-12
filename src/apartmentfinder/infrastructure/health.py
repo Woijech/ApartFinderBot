@@ -12,6 +12,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from apartmentfinder.infrastructure.metrics import render_prometheus_metrics
+
 logger = logging.getLogger(__name__)
 
 CheckResult = dict[str, Any]
@@ -123,6 +125,13 @@ class HealthServer:
                     status = HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE
                     self._write_json(status, payload)
                     return
+                if self.path == "/metrics":
+                    self._write_text(
+                        HTTPStatus.OK,
+                        render_prometheus_metrics(),
+                        "text/plain; version=0.0.4; charset=utf-8",
+                    )
+                    return
                 self._write_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
             def log_message(self, format: str, *args: object) -> None:
@@ -139,6 +148,19 @@ class HealthServer:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def _write_text(
+                self,
+                status: HTTPStatus,
+                body: str,
+                content_type: str,
+            ) -> None:
+                encoded = body.encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
 
         return Handler
 
