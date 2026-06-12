@@ -1,6 +1,22 @@
 services:
   bot:
     build: .
+    command: sh -c "alembic upgrade head && apartmentfinder-bot"
+    env_file:
+      - .env
+    environment:
+      APARTMENTFINDER_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-apartmentfinder}:${POSTGRES_PASSWORD:-apartmentfinder}@postgres:5432/${POSTGRES_DB:-apartmentfinder}
+      CLOAKBROWSER_CACHE_DIR: /root/.cache/cloakbrowser
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - cloakbrowser_cache:/root/.cache/cloakbrowser
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: sh -c "alembic upgrade head && apartmentfinder-worker"
     env_file:
       - .env
     environment:

@@ -27,6 +27,7 @@ dev = [
 
 [project.scripts]
 apartmentfinder-bot = "apartmentfinder.interfaces.telegram.bot:main"
+apartmentfinder-worker = "apartmentfinder.interfaces.worker.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -2106,7 +2106,7 @@ async def errors(event) -> None:
 
 
 async def run_bot() -> None:
-    """Create the aiogram dispatcher and run long polling."""
+    """Create the aiogram dispatcher and run Telegram long polling."""
     telegram_bot_token = settings.telegram_bot_token_value
     if not telegram_bot_token:
         raise RuntimeError("Set TELEGRAM_BOT_TOKEN in environment or .env file.")
@@ -2129,15 +2129,9 @@ async def run_bot() -> None:
     router.message.middleware(AccessMiddleware())
     router.callback_query.middleware(AccessMiddleware())
     dispatcher.include_router(router)
-    stop_event = asyncio.Event()
-    notifier_task = asyncio.create_task(notifier_loop(bot, stop_event))
     try:
         await dispatcher.start_polling(bot)
     finally:
-        stop_event.set()
-        notifier_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await notifier_task
         await bot.session.close()
         storage.close()
 

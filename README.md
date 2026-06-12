@@ -15,19 +15,29 @@ pytest
 ## Telegram Bot
 
 Create a bot with BotFather, put the token into `.env`, then run the full
-Docker stack:
+Docker stack. The stack runs three services: PostgreSQL, the Telegram bot, and
+the background polling worker:
 
 ```bash
 docker compose up -d --build
 ```
 
-If you intentionally run the bot from the local virtualenv, PostgreSQL must be
-reachable from the host on `localhost:5432`:
+The `bot` service handles Telegram commands, settings, favorites, history, and
+manual user actions. The `worker` service periodically checks enabled saved
+searches and sends listing notifications.
+
+If you intentionally run the app from the local virtualenv, PostgreSQL must be
+reachable from the host on `localhost:5432`. Start the bot and worker in
+separate terminals:
 
 ```bash
 docker compose up -d postgres
 alembic upgrade head
 apartmentfinder-bot
+```
+
+```bash
+apartmentfinder-worker
 ```
 
 Current bot filters:
@@ -101,6 +111,8 @@ alembic upgrade head
 ```
 
 The Docker image runs `alembic upgrade head` before starting the bot.
+Docker Compose runs the same migration command before starting both the `bot`
+and `worker` services.
 
 ## Configuration
 
@@ -118,6 +130,7 @@ Logs are written to stdout and are visible with Docker Compose:
 
 ```bash
 docker compose logs -f bot
+docker compose logs -f worker
 ```
 
 Use `INFO` for normal server usage and switch to `DEBUG` while developing or
@@ -130,7 +143,7 @@ APARTMENTFINDER_LOG_LEVEL=DEBUG
 After changing `.env`, restart the bot container:
 
 ```bash
-docker compose restart bot
+docker compose restart bot worker
 ```
 
 Debug logs include source checks, HTTP statuses, response times, parsed listing
@@ -141,7 +154,7 @@ After changing `.env`, rebuild the bot container:
 
 ```bash
 docker compose up -d --build
-docker compose logs -f bot
+docker compose logs -f bot worker
 ```
 
 ### CloakBrowser fallback
