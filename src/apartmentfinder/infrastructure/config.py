@@ -4,8 +4,27 @@ from __future__ import annotations
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SourceLimitSettings(BaseModel):
+    """Rate limiting settings for one listing source."""
+
+    max_requests_per_minute: int = Field(default=60, ge=1)
+    min_delay: float = Field(default=0.5, ge=0)
+    max_delay: float = Field(default=10, ge=0)
+    jitter: float = Field(default=0.2, ge=0)
+    cooldown_after_errors: int = Field(default=3, ge=1)
+    browser_fallback_limit: int = Field(default=3, ge=0)
+
+
+def default_source_limits() -> dict[str, SourceLimitSettings]:
+    """Return conservative defaults for known listing sources."""
+    return {
+        "kufar": SourceLimitSettings(),
+        "realt": SourceLimitSettings(),
+    }
 
 
 class Settings(BaseSettings):
@@ -15,6 +34,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         env_prefix="APARTMENTFINDER_",
+        env_nested_delimiter="__",
         extra="ignore",
         populate_by_name=True,
     )
@@ -49,6 +69,9 @@ class Settings(BaseSettings):
     bot_max_images: int = Field(default=9, ge=0, le=9)
     source_fetch_concurrency: int = Field(default=2, ge=1)
     subscription_check_concurrency: int = Field(default=3, ge=1)
+    source_limits: dict[str, SourceLimitSettings] = Field(
+        default_factory=default_source_limits
+    )
     browser_fetch_enabled: bool = False
     browser_fetch_timeout_seconds: float = Field(default=20, gt=0)
     browser_fetch_wait_until: str = "networkidle"
@@ -135,6 +158,14 @@ class Settings(BaseSettings):
         if self.telegram_bot_token is None:
             return None
         return self.telegram_bot_token.get_secret_value()
+
+    def source_limit(self, source: str) -> SourceLimitSettings:
+        """Return rate limit settings for one source code."""
+        normalized = source.casefold()
+        for source_code, limits in self.source_limits.items():
+            if source_code.casefold() == normalized:
+                return limits
+        return SourceLimitSettings()
 
 
 settings = Settings()

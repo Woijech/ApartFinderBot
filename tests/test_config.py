@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from apartmentfinder.infrastructure.config import Settings
+from apartmentfinder.infrastructure.config import Settings, SourceLimitSettings
 
 
 def test_settings_keeps_telegram_token_secret() -> None:
@@ -96,3 +96,24 @@ def test_settings_rejects_invalid_health_port() -> None:
 def test_settings_rejects_invalid_concurrency() -> None:
     with pytest.raises(ValidationError):
         Settings(source_fetch_concurrency=0, _env_file=None)
+
+
+def test_settings_reads_source_limit_defaults() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.source_limit("kufar").max_requests_per_minute == 60
+    assert settings.source_limit("realt").browser_fallback_limit == 3
+    assert settings.source_limit("unknown") == SourceLimitSettings()
+
+
+def test_settings_reads_nested_source_limit_env(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "APARTMENTFINDER_SOURCE_LIMITS__KUFAR__MAX_REQUESTS_PER_MINUTE",
+        "12",
+    )
+    monkeypatch.setenv("APARTMENTFINDER_SOURCE_LIMITS__KUFAR__MIN_DELAY", "1.5")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.source_limit("kufar").max_requests_per_minute == 12
+    assert settings.source_limit("kufar").min_delay == 1.5

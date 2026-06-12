@@ -12,6 +12,10 @@ from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure import browser_fetcher
 from apartmentfinder.infrastructure.browser_fetcher import BrowserFetchError
 from apartmentfinder.infrastructure.config import settings
+from apartmentfinder.infrastructure.rate_limiter import (
+    BrowserFallbackRateLimitError,
+    source_rate_limiter,
+)
 from apartmentfinder.infrastructure.sources.realt.parser import (
     parse_realt_detail_page,
     parse_realt_search_page,
@@ -130,7 +134,11 @@ class RealtClient:
                     base_url=self._base_url,
                     property_type=property_type,
                 )
-            except BrowserFetchError as error:
+            except (BrowserFetchError, BrowserFallbackRateLimitError) as error:
+                source_rate_limiter.record_error(
+                    "realt",
+                    settings.source_limit("realt"),
+                )
                 raise RealtNetworkError(f"Realt request failed: {url}") from error
         if should_retry_empty_result(result):
             logger.warning(
@@ -144,7 +152,11 @@ class RealtClient:
                     base_url=self._base_url,
                     property_type=property_type,
                 )
-            except BrowserFetchError as error:
+            except (BrowserFetchError, BrowserFallbackRateLimitError) as error:
+                source_rate_limiter.record_error(
+                    "realt",
+                    settings.source_limit("realt"),
+                )
                 raise RealtNetworkError(f"Realt request failed: {url}") from error
         return result
 
@@ -154,6 +166,10 @@ class RealtClient:
             url = f"{self._base_url}{url}"
         last_error: Exception | None = None
         for attempt in range(self._retries + 1):
+            await source_rate_limiter.acquire_request(
+                "realt",
+                settings.source_limit("realt"),
+            )
             started_at = perf_counter()
             logger.debug(
                 "source_http_request_started source=realt attempt=%s url=%s "
@@ -174,6 +190,7 @@ class RealtClient:
                     len(response.content),
                     url,
                 )
+                source_rate_limiter.record_success("realt")
                 return response.text
             except (
                 httpx.TimeoutException,
@@ -198,14 +215,22 @@ class RealtClient:
         if settings.browser_fetch_enabled:
             try:
                 return await self.fetch_url_with_browser(url)
-            except BrowserFetchError as browser_error:
+            except (
+                BrowserFetchError,
+                BrowserFallbackRateLimitError,
+            ) as browser_error:
                 last_error = browser_error
+        source_rate_limiter.record_error("realt", settings.source_limit("realt"))
         raise RealtNetworkError(f"Realt request failed: {url}") from last_error
 
     async def fetch_url_with_browser(self, url: str) -> str:
         """Fetch a URL through the configured browser fallback."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
+        await source_rate_limiter.acquire_browser_fallback(
+            "realt",
+            settings.source_limit("realt"),
+        )
         logger.info("source_browser_fetch_started source=realt url=%s", url)
         return await asyncio.to_thread(browser_fetcher.fetch_html, url)
 

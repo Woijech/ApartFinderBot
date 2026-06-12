@@ -13,6 +13,10 @@ from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure import browser_fetcher
 from apartmentfinder.infrastructure.browser_fetcher import BrowserFetchError
 from apartmentfinder.infrastructure.config import settings
+from apartmentfinder.infrastructure.rate_limiter import (
+    BrowserFallbackRateLimitError,
+    source_rate_limiter,
+)
 from apartmentfinder.infrastructure.sources.kufar.parser import (
     parse_detail_page,
     parse_search_page,
@@ -118,7 +122,11 @@ class KufarClient:
             logger.warning("source_parse_failed_using_browser source=kufar url=%s", url)
             try:
                 result = parse_search_page(await self.fetch_url_with_browser(url))
-            except BrowserFetchError as error:
+            except (BrowserFetchError, BrowserFallbackRateLimitError) as error:
+                source_rate_limiter.record_error(
+                    "kufar",
+                    settings.source_limit("kufar"),
+                )
                 raise KufarNetworkError(f"Kufar request failed: {url}") from error
         if should_retry_empty_result(result):
             logger.warning(
@@ -128,7 +136,11 @@ class KufarClient:
             )
             try:
                 return parse_search_page(await self.fetch_url_with_browser(url))
-            except BrowserFetchError as error:
+            except (BrowserFetchError, BrowserFallbackRateLimitError) as error:
+                source_rate_limiter.record_error(
+                    "kufar",
+                    settings.source_limit("kufar"),
+                )
                 raise KufarNetworkError(f"Kufar request failed: {url}") from error
         return result
 
@@ -147,6 +159,10 @@ class KufarClient:
             url = f"{self._base_url}{url}"
         last_error: Exception | None = None
         for attempt in range(self._retries + 1):
+            await source_rate_limiter.acquire_request(
+                "kufar",
+                settings.source_limit("kufar"),
+            )
             started_at = perf_counter()
             logger.debug(
                 "source_http_request_started source=kufar attempt=%s url=%s "
@@ -167,6 +183,7 @@ class KufarClient:
                     len(response.content),
                     url,
                 )
+                source_rate_limiter.record_success("kufar")
                 return response.text
             except (
                 httpx.TimeoutException,
@@ -191,14 +208,22 @@ class KufarClient:
         if settings.browser_fetch_enabled:
             try:
                 return await self.fetch_url_with_browser(url)
-            except BrowserFetchError as browser_error:
+            except (
+                BrowserFetchError,
+                BrowserFallbackRateLimitError,
+            ) as browser_error:
                 last_error = browser_error
+        source_rate_limiter.record_error("kufar", settings.source_limit("kufar"))
         raise KufarNetworkError(f"Kufar request failed: {url}") from last_error
 
     async def fetch_url_with_browser(self, url: str) -> str:
         """Fetch a URL through the configured browser fallback."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
+        await source_rate_limiter.acquire_browser_fallback(
+            "kufar",
+            settings.source_limit("kufar"),
+        )
         logger.info("source_browser_fetch_started source=kufar url=%s", url)
         return await asyncio.to_thread(browser_fetcher.fetch_html, url)
 

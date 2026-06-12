@@ -5,6 +5,7 @@ import pytest
 
 from apartmentfinder.domain.models import SearchRequest
 from apartmentfinder.infrastructure.browser_fetcher import BrowserFetchError
+from apartmentfinder.infrastructure.config import SourceLimitSettings
 from apartmentfinder.infrastructure.sources.kufar import client as kufar_client
 from apartmentfinder.infrastructure.sources.kufar.client import (
     KufarClient,
@@ -95,4 +96,32 @@ def test_client_browser_fallback_failure_preserves_network_error(monkeypatch) ->
 
     with pytest.raises(KufarNetworkError):
         asyncio.run(client.fetch_url("https://example.test/status/403"))
+    asyncio.run(client.close())
+
+
+def test_client_skips_browser_fallback_when_limited(monkeypatch, caplog) -> None:
+    client = KufarClient(retries=0)
+    client._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(403, request=request)
+        )
+    )
+    monkeypatch.setattr(kufar_client.settings, "browser_fetch_enabled", True)
+    monkeypatch.setattr(
+        kufar_client.settings,
+        "source_limits",
+        {
+            "kufar": SourceLimitSettings(
+                min_delay=0,
+                jitter=0,
+                browser_fallback_limit=0,
+            )
+        },
+    )
+
+    with caplog.at_level("WARNING", logger="apartmentfinder.infrastructure"):
+        with pytest.raises(KufarNetworkError):
+            asyncio.run(client.fetch_url("https://example.test/status/403"))
+
+    assert "source_browser_fallback_skipped source=kufar limit=0" in caplog.text
     asyncio.run(client.close())
