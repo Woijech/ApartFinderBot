@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Protocol
 
 from apartmentfinder.domain.models import Listing, SearchRequest
@@ -13,18 +12,18 @@ class ListingSource(Protocol):
 
     code: str
 
-    def search_pages(
+    async def search_pages(
         self,
         request: SearchRequest,
         max_pages: int,
         delay_seconds: float,
-    ) -> Iterable[Listing]:
-        """Yield listings matching one normalized request."""
+    ) -> list[Listing]:
+        """Return listings matching one normalized request."""
 
-    def fetch_listing_detail(self, listing: Listing) -> Listing:
+    async def fetch_listing_detail(self, listing: Listing) -> Listing:
         """Return an enriched listing before notification."""
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close source resources."""
 
 

@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 
@@ -42,51 +44,55 @@ def test_search_request_keeps_local_only_filters_out_of_kufar_params() -> None:
     assert "exclude_keywords" not in params
 
 
-def test_client_wraps_forbidden_status_as_network_error() -> None:
+def test_client_wraps_forbidden_status_as_network_error(monkeypatch) -> None:
     client = KufarClient(retries=0)
-    client._client = httpx.Client(
+    client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(403, request=request)
         )
     )
+    monkeypatch.setattr(kufar_client.settings, "browser_fetch_enabled", False)
 
     with pytest.raises(KufarNetworkError):
-        client.fetch_url("https://example.test/status/403")
+        asyncio.run(client.fetch_url("https://example.test/status/403"))
+    asyncio.run(client.close())
 
 
 def test_client_uses_browser_fallback_after_forbidden_status(monkeypatch) -> None:
     client = KufarClient(retries=0)
-    client._client = httpx.Client(
+    client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(403, request=request)
         )
     )
     monkeypatch.setattr(kufar_client.settings, "browser_fetch_enabled", True)
-    monkeypatch.setattr(
-        kufar_client.browser_fetcher,
-        "fetch_html",
-        lambda url: "<html>rendered</html>",
-    )
+
+    async def fetch_with_browser(_url: str) -> str:
+        return "<html>rendered</html>"
+
+    monkeypatch.setattr(client, "fetch_url_with_browser", fetch_with_browser)
 
     assert (
-        client.fetch_url("https://example.test/status/403")
+        asyncio.run(client.fetch_url("https://example.test/status/403"))
         == "<html>rendered</html>"
     )
+    asyncio.run(client.close())
 
 
 def test_client_browser_fallback_failure_preserves_network_error(monkeypatch) -> None:
     client = KufarClient(retries=0)
-    client._client = httpx.Client(
+    client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(403, request=request)
         )
     )
     monkeypatch.setattr(kufar_client.settings, "browser_fetch_enabled", True)
 
-    def fail(_url):
+    async def fail(_url):
         raise BrowserFetchError("browser unavailable")
 
-    monkeypatch.setattr(kufar_client.browser_fetcher, "fetch_html", fail)
+    monkeypatch.setattr(client, "fetch_url_with_browser", fail)
 
     with pytest.raises(KufarNetworkError):
-        client.fetch_url("https://example.test/status/403")
+        asyncio.run(client.fetch_url("https://example.test/status/403"))
+    asyncio.run(client.close())

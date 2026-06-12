@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import pytest
@@ -18,12 +19,12 @@ class FakeSource:
         self._listings = listings or []
         self._error = error
 
-    def search_pages(self, request, max_pages, delay_seconds):
+    async def search_pages(self, request, max_pages, delay_seconds):
         if self._error:
             raise self._error
         return self._listings
 
-    def close(self):
+    async def close(self):
         pass
 
 
@@ -46,11 +47,14 @@ def test_fetch_from_sources_combines_multiple_sources() -> None:
         ),
     ]
 
-    listings = fetch_from_sources(
-        SearchRequest(),
-        sources,
-        max_pages=1,
-        delay_seconds=0,
+    listings = asyncio.run(
+        fetch_from_sources(
+            SearchRequest(),
+            sources,
+            max_pages=1,
+            delay_seconds=0,
+            concurrency=2,
+        )
     )
 
     assert [(listing.source, listing.ad_id) for listing in listings] == [
@@ -68,7 +72,15 @@ def test_fetch_from_sources_logs_successful_source(caplog) -> None:
     ]
 
     with caplog.at_level(logging.INFO, logger="apartmentfinder.application"):
-        fetch_from_sources(SearchRequest(), sources, max_pages=1, delay_seconds=0)
+        asyncio.run(
+            fetch_from_sources(
+                SearchRequest(),
+                sources,
+                max_pages=1,
+                delay_seconds=0,
+                concurrency=2,
+            )
+        )
 
     assert "listing_source_check_finished source=realt count=1" in caplog.text
     assert "listing_sources_finished total=1 sources={'realt': 1}" in caplog.text
@@ -83,11 +95,14 @@ def test_fetch_from_sources_keeps_working_when_one_source_fails() -> None:
         ),
     ]
 
-    listings = fetch_from_sources(
-        SearchRequest(),
-        sources,
-        max_pages=1,
-        delay_seconds=0,
+    listings = asyncio.run(
+        fetch_from_sources(
+            SearchRequest(),
+            sources,
+            max_pages=1,
+            delay_seconds=0,
+            concurrency=2,
+        )
     )
 
     assert [listing.source for listing in listings] == ["realt"]
@@ -103,7 +118,15 @@ def test_fetch_from_sources_logs_failed_source(caplog) -> None:
     ]
 
     with caplog.at_level(logging.WARNING, logger="apartmentfinder.application"):
-        fetch_from_sources(SearchRequest(), sources, max_pages=1, delay_seconds=0)
+        asyncio.run(
+            fetch_from_sources(
+                SearchRequest(),
+                sources,
+                max_pages=1,
+                delay_seconds=0,
+                concurrency=2,
+            )
+        )
 
     assert "listing_source_failed source=kufar error_type=RuntimeError" in caplog.text
 
@@ -115,12 +138,48 @@ def test_fetch_from_sources_raises_when_all_sources_fail() -> None:
     ]
 
     with pytest.raises(SourceNetworkError):
+        asyncio.run(
+            fetch_from_sources(
+                SearchRequest(),
+                sources,
+                max_pages=1,
+                delay_seconds=0,
+                concurrency=2,
+            )
+        )
+
+
+def test_fetch_from_sources_limits_concurrency() -> None:
+    active = 0
+    max_active = 0
+
+    class SlowSource(FakeSource):
+        async def search_pages(self, request, max_pages, delay_seconds):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return self._listings
+
+    sources = [
+        SlowSource("one", [Listing(ad_id=1, title="One", url="https://one.test")]),
+        SlowSource("two", [Listing(ad_id=2, title="Two", url="https://two.test")]),
+        SlowSource("three", [Listing(ad_id=3, title="Three", url="https://3.test")]),
+    ]
+
+    listings = asyncio.run(
         fetch_from_sources(
             SearchRequest(),
             sources,
             max_pages=1,
             delay_seconds=0,
+            concurrency=1,
         )
+    )
+
+    assert [listing.ad_id for listing in listings] == [1, 2, 3]
+    assert max_active == 1
 
 
 def test_configured_sources_returns_kufar_and_realt_sources() -> None:
@@ -130,4 +189,4 @@ def test_configured_sources_returns_kufar_and_realt_sources() -> None:
         assert [source.code for source in sources] == ["kufar", "realt"]
     finally:
         for source in sources:
-            source.close()
+            asyncio.run(source.close())

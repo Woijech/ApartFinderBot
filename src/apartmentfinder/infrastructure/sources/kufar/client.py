@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Iterable
-from time import perf_counter, sleep
+from time import perf_counter
 from urllib.parse import urlencode, urlparse
 
 import httpx
@@ -30,7 +30,7 @@ class KufarNetworkError(RuntimeError):
 
 
 class KufarClient:
-    """Synchronous Kufar client used by background bot jobs."""
+    """Asynchronous Kufar client used by background bot jobs."""
 
     def __init__(
         self,
@@ -43,7 +43,7 @@ class KufarClient:
         self._timeout_seconds = timeout_seconds
         self._retries = max(retries, 0)
         self._retry_delay_seconds = max(retry_delay_seconds, 0)
-        self._client = httpx.Client(
+        self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 timeout_seconds,
                 connect=timeout_seconds,
@@ -57,27 +57,28 @@ class KufarClient:
             },
         )
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the underlying HTTP connection pool."""
-        self._client.close()
+        await self._client.aclose()
 
-    def __enter__(self) -> KufarClient:
-        """Enter a context-managed client session."""
+    async def __aenter__(self) -> KufarClient:
+        """Enter an async context-managed client session."""
         return self
 
-    def __exit__(self, *_args: object) -> None:
+    async def __aexit__(self, *_args: object) -> None:
         """Close the client session when leaving a context manager."""
-        self.close()
+        await self.close()
 
-    def search_pages(
+    async def search_pages(
         self,
         request: SearchRequest,
         max_pages: int = 1,
         delay_seconds: float = 1.0,
-    ) -> Iterable[Listing]:
-        """Yield listings from one or more Kufar search pages."""
+    ) -> list[Listing]:
+        """Return listings from one or more Kufar search pages."""
         params = kufar_params(request)
         cursor: str | None = None
+        listings: list[Listing] = []
 
         for page_number in range(max_pages):
             page_params = params | ({"cursor": cursor} if cursor else {})
@@ -87,7 +88,7 @@ class KufarClient:
                 kufar_path(request),
                 sorted(page_params),
             )
-            result = self.search_page(kufar_path(request), page_params)
+            result = await self.search_page(kufar_path(request), page_params)
             logger.debug(
                 "source_page_parsed source=kufar page=%s count=%s total=%s "
                 "has_next=%s",
@@ -96,18 +97,19 @@ class KufarClient:
                 result.total,
                 bool(result.next_cursor),
             )
-            yield from result.listings
+            listings.extend(result.listings)
 
             cursor = result.next_cursor
             if not cursor:
                 break
             if page_number < max_pages - 1 and delay_seconds > 0:
-                sleep(delay_seconds)
+                await asyncio.sleep(delay_seconds)
+        return listings
 
-    def search_page(self, path: str, params: dict[str, str]):
+    async def search_page(self, path: str, params: dict[str, str]):
         """Fetch and parse one Kufar search page."""
         url = self._url(path, params)
-        html = self.fetch_url(url)
+        html = await self.fetch_url(url)
         try:
             result = parse_search_page(html)
         except Exception:
@@ -115,7 +117,7 @@ class KufarClient:
                 raise
             logger.warning("source_parse_failed_using_browser source=kufar url=%s", url)
             try:
-                result = parse_search_page(self.fetch_url_with_browser(url))
+                result = parse_search_page(await self.fetch_url_with_browser(url))
             except BrowserFetchError as error:
                 raise KufarNetworkError(f"Kufar request failed: {url}") from error
         if should_retry_empty_result(result):
@@ -125,21 +127,21 @@ class KufarClient:
                 url,
             )
             try:
-                return parse_search_page(self.fetch_url_with_browser(url))
+                return parse_search_page(await self.fetch_url_with_browser(url))
             except BrowserFetchError as error:
                 raise KufarNetworkError(f"Kufar request failed: {url}") from error
         return result
 
-    def fetch_listing_detail(self, listing: Listing) -> Listing:
+    async def fetch_listing_detail(self, listing: Listing) -> Listing:
         """Fetch a listing detail page to get full description and gallery URLs."""
-        return parse_detail_page(self.fetch_url(listing.url))
+        return parse_detail_page(await self.fetch_url(listing.url))
 
-    def fetch_html(self, path: str, params: dict[str, str]) -> str:
+    async def fetch_html(self, path: str, params: dict[str, str]) -> str:
         """Fetch a Kufar path with query parameters and return response text."""
         url = self._url(path, params)
-        return self.fetch_url(url)
+        return await self.fetch_url(url)
 
-    def fetch_url(self, url: str) -> str:
+    async def fetch_url(self, url: str) -> str:
         """Fetch an absolute or site-relative URL and return response text."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
@@ -154,7 +156,7 @@ class KufarClient:
                 self._timeout_seconds,
             )
             try:
-                response = self._client.get(url)
+                response = await self._client.get(url)
                 response.raise_for_status()
                 logger.debug(
                     "source_http_request_finished source=kufar attempt=%s "
@@ -183,22 +185,22 @@ class KufarClient:
                     attempt < self._retries,
                 )
                 if attempt < self._retries:
-                    sleep(self._retry_delay_seconds)
+                    await asyncio.sleep(self._retry_delay_seconds)
                     continue
                 break
         if settings.browser_fetch_enabled:
             try:
-                return self.fetch_url_with_browser(url)
+                return await self.fetch_url_with_browser(url)
             except BrowserFetchError as browser_error:
                 last_error = browser_error
         raise KufarNetworkError(f"Kufar request failed: {url}") from last_error
 
-    def fetch_url_with_browser(self, url: str) -> str:
+    async def fetch_url_with_browser(self, url: str) -> str:
         """Fetch a URL through the configured browser fallback."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
         logger.info("source_browser_fetch_started source=kufar url=%s", url)
-        return browser_fetcher.fetch_html(url)
+        return await asyncio.to_thread(browser_fetcher.fetch_html, url)
 
     def _url(self, path: str, params: dict[str, str]) -> str:
         """Build an absolute URL for a Kufar path and query dictionary."""

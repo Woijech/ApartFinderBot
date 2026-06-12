@@ -84,8 +84,15 @@ def test_settings_reads_healthcheck_defaults() -> None:
     assert settings.bot_health_port == 8080
     assert settings.worker_health_port == 8081
     assert settings.readiness_poll_max_age_seconds == 900
+    assert settings.source_fetch_concurrency == 2
+    assert settings.subscription_check_concurrency == 3
 
 
 def test_settings_rejects_invalid_health_port() -> None:
     with pytest.raises(ValidationError):
         Settings(bot_health_port=0, _env_file=None)
+
+
+def test_settings_rejects_invalid_concurrency() -> None:
+    with pytest.raises(ValidationError):
+        Settings(source_fetch_concurrency=0, _env_file=None)

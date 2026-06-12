@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     bot_max_pages: int = Field(default=1, ge=1)
     bot_page_delay_seconds: float = Field(default=1, ge=0)
     bot_max_images: int = Field(default=9, ge=0, le=9)
+    source_fetch_concurrency: int = Field(default=2, ge=1)
+    subscription_check_concurrency: int = Field(default=3, ge=1)
     browser_fetch_enabled: bool = False
     browser_fetch_timeout_seconds: float = Field(default=20, gt=0)
     browser_fetch_wait_until: str = "networkidle"

@@ -806,19 +806,30 @@ async def notifier_loop(bot: Bot, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         enabled_profiles = storage.all_enabled()
         logger.info("notifier_loop_tick enabled_profiles=%s", len(enabled_profiles))
-        for profile in enabled_profiles:
-            if stop_event.is_set():
-                break
-            try:
-                await notify_profile(bot, profile)
-            except Exception:
-                logger.exception(
-                    "profile_notification_check_failed chat_id=%s "
-                    "subscription_id=%s property_type=%s",
-                    profile.chat_id,
-                    profile.id,
-                    profile.request.property_type,
-                )
+        semaphore = asyncio.Semaphore(settings.subscription_check_concurrency)
+
+        async def notify_with_limit(
+            profile: UserProfile,
+            semaphore: asyncio.Semaphore = semaphore,
+        ) -> None:
+            async with semaphore:
+                try:
+                    await notify_profile(bot, profile)
+                except Exception:
+                    logger.exception(
+                        "profile_notification_check_failed chat_id=%s "
+                        "subscription_id=%s property_type=%s",
+                        profile.chat_id,
+                        profile.id,
+                        profile.request.property_type,
+                    )
+
+        profiles_to_check = [
+            profile for profile in enabled_profiles if not stop_event.is_set()
+        ]
+        await asyncio.gather(
+            *(notify_with_limit(profile) for profile in profiles_to_check),
+        )
         if worker_health_state is not None:
             worker_health_state.mark_successful_poll()
         await sleep_or_stop(stop_event, settings.bot_poll_interval_seconds)
@@ -1002,17 +1013,13 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
 
 async def fetch_listings(profile: UserProfile) -> list[Listing]:
     """Fetch matching search-page listings without loading detail pages."""
-
-    def fetch() -> list[Listing]:
-        """Run synchronous source clients for one profile."""
-        return fetch_from_sources(
-            profile.request,
-            configured_sources(),
-            max_pages=settings.bot_max_pages,
-            delay_seconds=settings.bot_page_delay_seconds,
-        )
-
-    return await asyncio.to_thread(fetch)
+    return await fetch_from_sources(
+        profile.request,
+        configured_sources(),
+        max_pages=settings.bot_max_pages,
+        delay_seconds=settings.bot_page_delay_seconds,
+        concurrency=settings.source_fetch_concurrency,
+    )
 
 
 def unseen_items_for_subscription(
@@ -1064,12 +1071,11 @@ def elapsed_ms(started_at: datetime) -> int:
 
 async def fetch_listing_details(listings: list[Listing]) -> list[Listing]:
     """Load full descriptions and gallery URLs only for listings being sent."""
-
-    def fetch() -> list[Listing]:
-        """Fetch detail pages through the listing's source."""
-        return enrich_listing_details(listings, configured_source_map())
-
-    return await asyncio.to_thread(fetch)
+    return await enrich_listing_details(
+        listings,
+        configured_source_map(),
+        concurrency=settings.source_fetch_concurrency,
+    )
 
 
 class ProfileCheckAlreadyRunning(RuntimeError):

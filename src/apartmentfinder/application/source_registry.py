@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from time import perf_counter
 
@@ -25,17 +26,20 @@ def source_label(source: str) -> str:
     return {"kufar": "Kufar", "realt": "Realt"}.get(source, source)
 
 
-def fetch_from_sources(
+async def fetch_from_sources(
     request: SearchRequest,
     sources: list[ListingSource],
     *,
     max_pages: int,
     delay_seconds: float,
+    concurrency: int,
 ) -> list[Listing]:
     """Fetch search listings from all configured sources."""
-    listings: list[Listing] = []
-    failures = []
-    for source in sources:
+    semaphore = asyncio.Semaphore(max(concurrency, 1))
+
+    async def fetch_source(
+        source: ListingSource,
+    ) -> tuple[list[Listing], Exception | None]:
         started_at = perf_counter()
         logger.info(
             "listing_source_check_started source=%s max_pages=%s delay_seconds=%s",
@@ -44,14 +48,12 @@ def fetch_from_sources(
             delay_seconds,
         )
         try:
-            source_listings = list(
-                source.search_pages(
+            async with semaphore:
+                source_listings = await source.search_pages(
                     request,
                     max_pages=max_pages,
                     delay_seconds=delay_seconds,
-                ),
-            )
-            listings.extend(source_listings)
+                )
             observe_source_response_time(
                 (perf_counter() - started_at),
                 source=source.code,
@@ -64,6 +66,7 @@ def fetch_from_sources(
                 len(source_listings),
                 elapsed_ms(started_at),
             )
+            return source_listings, None
         except Exception as error:
             logger.warning(
                 "listing_source_failed source=%s error_type=%s error=%s "
@@ -74,9 +77,17 @@ def fetch_from_sources(
                 elapsed_ms(started_at),
             )
             inc_source_error(source=source.code, error_type=type(error).__name__)
-            failures.append(error)
+            return [], error
         finally:
-            source.close()
+            await source.close()
+
+    results = await asyncio.gather(*(fetch_source(source) for source in sources))
+    listings: list[Listing] = []
+    failures = []
+    for source_listings, error in results:
+        listings.extend(source_listings)
+        if error is not None:
+            failures.append(error)
     if not listings and failures:
         raise SourceNetworkError("All listing sources failed") from failures[-1]
     logger.info(
@@ -88,48 +99,55 @@ def fetch_from_sources(
     return listings
 
 
-def enrich_listing_details(
+async def enrich_listing_details(
     listings: list[Listing],
     source_by_code: dict[str, ListingSource],
+    *,
+    concurrency: int,
 ) -> list[Listing]:
     """Fetch detail pages with the source that owns each listing."""
-    enriched = []
-    try:
-        for listing in listings:
-            source = source_by_code.get(listing.source)
-            if source is None:
-                logger.warning(
-                    "listing_enrichment_source_missing source=%s ad_id=%s",
-                    listing.source,
-                    listing.ad_id,
-                )
-                enriched.append(listing)
-                continue
-            started_at = perf_counter()
-            logger.debug(
-                "listing_enrichment_started source=%s ad_id=%s",
+    semaphore = asyncio.Semaphore(max(concurrency, 1))
+
+    async def enrich_listing(listing: Listing) -> Listing:
+        source = source_by_code.get(listing.source)
+        if source is None:
+            logger.warning(
+                "listing_enrichment_source_missing source=%s ad_id=%s",
                 listing.source,
                 listing.ad_id,
             )
-            try:
-                enriched.append(source.fetch_listing_detail(listing))
-                logger.debug(
-                    "listing_enrichment_finished source=%s ad_id=%s duration_ms=%s",
-                    listing.source,
-                    listing.ad_id,
-                    elapsed_ms(started_at),
-                )
-            except Exception:
-                logger.exception(
-                    "listing_enrichment_failed source=%s ad_id=%s",
-                    listing.source,
-                    listing.ad_id,
-                )
-                enriched.append(listing)
+            return listing
+        started_at = perf_counter()
+        logger.debug(
+            "listing_enrichment_started source=%s ad_id=%s",
+            listing.source,
+            listing.ad_id,
+        )
+        try:
+            async with semaphore:
+                enriched_listing = await source.fetch_listing_detail(listing)
+            logger.debug(
+                "listing_enrichment_finished source=%s ad_id=%s duration_ms=%s",
+                listing.source,
+                listing.ad_id,
+                elapsed_ms(started_at),
+            )
+            return enriched_listing
+        except Exception:
+            logger.exception(
+                "listing_enrichment_failed source=%s ad_id=%s",
+                listing.source,
+                listing.ad_id,
+            )
+            return listing
+
+    try:
+        return await asyncio.gather(
+            *(enrich_listing(listing) for listing in listings),
+        )
     finally:
         for source in source_by_code.values():
-            source.close()
-    return enriched
+            await source.close()
 
 
 def elapsed_ms(started_at: float) -> int:

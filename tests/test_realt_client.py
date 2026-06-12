@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 
@@ -28,37 +30,41 @@ RENDERED_LISTING_HTML = """
 
 def test_realt_retries_empty_search_result_with_browser(monkeypatch):
     client = RealtClient(retries=0)
-    client._client = httpx.Client(
+    client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(200, text=EMPTY_TOTAL_HTML, request=request)
         )
     )
     monkeypatch.setattr(realt_client.settings, "browser_fetch_enabled", True)
     monkeypatch.setattr(realt_client.settings, "browser_fetch_fallback_on_empty", True)
-    monkeypatch.setattr(
-        realt_client.browser_fetcher,
-        "fetch_html",
-        lambda url: RENDERED_LISTING_HTML,
+
+    async def fetch_with_browser(_url: str) -> str:
+        return RENDERED_LISTING_HTML
+
+    monkeypatch.setattr(client, "fetch_url_with_browser", fetch_with_browser)
+
+    result = asyncio.run(
+        client.search_page("https://realt.by/rent/room-for-long/", "room")
     )
 
-    result = client.search_page("https://realt.by/rent/room-for-long/", "room")
-
     assert [listing.ad_id for listing in result.listings] == [4119308]
+    asyncio.run(client.close())
 
 
 def test_realt_browser_fallback_failure_preserves_network_error(monkeypatch):
     client = RealtClient(retries=0)
-    client._client = httpx.Client(
+    client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(403, request=request)
         )
     )
     monkeypatch.setattr(realt_client.settings, "browser_fetch_enabled", True)
 
-    def fail(_url):
+    async def fail(_url):
         raise BrowserFetchError("browser unavailable")
 
-    monkeypatch.setattr(realt_client.browser_fetcher, "fetch_html", fail)
+    monkeypatch.setattr(client, "fetch_url_with_browser", fail)
 
     with pytest.raises(RealtNetworkError):
-        client.fetch_url("https://realt.by/blocked")
+        asyncio.run(client.fetch_url("https://realt.by/blocked"))
+    asyncio.run(client.close())

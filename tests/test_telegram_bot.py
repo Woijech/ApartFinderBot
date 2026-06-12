@@ -593,6 +593,7 @@ def test_notifier_loop_logs_profile_failure_and_continues(
         SimpleNamespace(
             bot_initial_poll_delay_seconds=0,
             bot_poll_interval_seconds=1,
+            subscription_check_concurrency=2,
         ),
     )
 
@@ -633,6 +634,7 @@ def test_notifier_loop_marks_successful_poll_for_readiness(
         SimpleNamespace(
             bot_initial_poll_delay_seconds=0,
             bot_poll_interval_seconds=1,
+            subscription_check_concurrency=2,
         ),
     )
 
@@ -642,6 +644,53 @@ def test_notifier_loop_marks_successful_poll_for_readiness(
         monkeypatch.setattr(telegram_bot, "worker_health_state", None)
 
     assert health_state.last_successful_poll_at is not None
+
+
+def test_notifier_loop_limits_subscription_concurrency(
+    monkeypatch,
+) -> None:
+    profiles = [
+        UserProfile(chat_id=123, id=1, request=SearchRequest(property_type="flat")),
+        UserProfile(chat_id=123, id=2, request=SearchRequest(property_type="room")),
+        UserProfile(chat_id=123, id=3, request=SearchRequest(property_type="flat")),
+    ]
+    active = 0
+    max_active = 0
+    sleep_calls = 0
+
+    async def fake_sleep_or_stop(
+        stop_event: asyncio.Event,
+        delay_seconds: float,
+    ) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls > 1:
+            stop_event.set()
+
+    async def fake_notify_profile(bot: object, profile: UserProfile) -> None:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0)
+        active -= 1
+
+    fake_storage = SimpleNamespace(all_enabled=lambda: profiles)
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    monkeypatch.setattr(telegram_bot, "sleep_or_stop", fake_sleep_or_stop)
+    monkeypatch.setattr(telegram_bot, "notify_profile", fake_notify_profile)
+    monkeypatch.setattr(
+        telegram_bot,
+        "settings",
+        SimpleNamespace(
+            bot_initial_poll_delay_seconds=0,
+            bot_poll_interval_seconds=1,
+            subscription_check_concurrency=1,
+        ),
+    )
+
+    asyncio.run(notifier_loop(object(), asyncio.Event()))
+
+    assert max_active == 1
 
 
 def test_history_keyboard_opens_old_listing_view_when_history_exists(

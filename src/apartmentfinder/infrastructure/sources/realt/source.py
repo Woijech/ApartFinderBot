@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from apartmentfinder.domain.models import Listing, SearchRequest
 from apartmentfinder.infrastructure.config import settings
 from apartmentfinder.infrastructure.sources.realt.client import RealtClient
@@ -21,19 +19,19 @@ class RealtSource:
             retry_delay_seconds=settings.bot_fetch_retry_delay_seconds,
         )
 
-    def search_pages(
+    async def search_pages(
         self,
         request: SearchRequest,
         max_pages: int,
         delay_seconds: float,
-    ) -> Iterable[Listing]:
-        """Yield listings from Realt.by."""
-        return self._client.search_pages(request, max_pages, delay_seconds)
+    ) -> list[Listing]:
+        """Return listings from Realt.by."""
+        return await self._client.search_pages(request, max_pages, delay_seconds)
 
-    def fetch_listing_detail(self, listing: Listing) -> Listing:
+    async def fetch_listing_detail(self, listing: Listing) -> Listing:
         """Fetch full Realt listing details."""
-        return self._client.fetch_listing_detail(listing)
+        return await self._client.fetch_listing_detail(listing)
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close HTTP connections."""
-        self._client.close()
+        await self._client.close()

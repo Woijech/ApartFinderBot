@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Iterable
-from time import perf_counter, sleep
+from time import perf_counter
 
 import httpx
 
@@ -29,7 +29,7 @@ class RealtNetworkError(RuntimeError):
 
 
 class RealtClient:
-    """Synchronous Realt.by client used by background bot jobs."""
+    """Asynchronous Realt.by client used by background bot jobs."""
 
     def __init__(
         self,
@@ -42,7 +42,7 @@ class RealtClient:
         self._timeout_seconds = timeout_seconds
         self._retries = max(retries, 0)
         self._retry_delay_seconds = max(retry_delay_seconds, 0)
-        self._client = httpx.Client(
+        self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(
                 timeout_seconds,
                 connect=timeout_seconds,
@@ -56,29 +56,30 @@ class RealtClient:
             },
         )
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the underlying HTTP connection pool."""
-        self._client.close()
+        await self._client.aclose()
 
-    def __enter__(self) -> RealtClient:
-        """Enter a context-managed client session."""
+    async def __aenter__(self) -> RealtClient:
+        """Enter an async context-managed client session."""
         return self
 
-    def __exit__(self, *_args: object) -> None:
+    async def __aexit__(self, *_args: object) -> None:
         """Close the client session when leaving a context manager."""
-        self.close()
+        await self.close()
 
-    def search_pages(
+    async def search_pages(
         self,
         request: SearchRequest,
         max_pages: int = 1,
         delay_seconds: float = 1.0,
-    ) -> Iterable[Listing]:
-        """Yield listings from one or more Realt search pages."""
+    ) -> list[Listing]:
+        """Return listings from one or more Realt search pages."""
         path = REALT_PATHS.get(request.property_type)
         if path is None:
-            return
+            return []
         next_url: str | None = self._url(path, {})
+        listings: list[Listing] = []
         for page_number in range(max_pages):
             if next_url is None:
                 break
@@ -87,7 +88,7 @@ class RealtClient:
                 page_number + 1,
                 next_url,
             )
-            result = self.search_page(next_url, request.property_type)
+            result = await self.search_page(next_url, request.property_type)
             logger.debug(
                 "source_page_parsed source=realt page=%s count=%s total=%s "
                 "has_next=%s",
@@ -96,22 +97,23 @@ class RealtClient:
                 result.total,
                 bool(result.next_cursor),
             )
-            yield from result.listings
+            listings.extend(result.listings)
             next_url = result.next_cursor
             if page_number < max_pages - 1 and delay_seconds > 0:
-                sleep(delay_seconds)
+                await asyncio.sleep(delay_seconds)
+        return listings
 
-    def fetch_listing_detail(self, listing: Listing) -> Listing:
+    async def fetch_listing_detail(self, listing: Listing) -> Listing:
         """Fetch a listing detail page to get richer text and gallery URLs."""
         return parse_realt_detail_page(
-            self.fetch_url(listing.url),
+            await self.fetch_url(listing.url),
             listing,
             base_url=self._base_url,
         )
 
-    def search_page(self, url: str, property_type: str):
+    async def search_page(self, url: str, property_type: str):
         """Fetch and parse one Realt search page."""
-        html = self.fetch_url(url)
+        html = await self.fetch_url(url)
         try:
             result = parse_realt_search_page(
                 html,
@@ -124,7 +126,7 @@ class RealtClient:
             logger.warning("source_parse_failed_using_browser source=realt url=%s", url)
             try:
                 result = parse_realt_search_page(
-                    self.fetch_url_with_browser(url),
+                    await self.fetch_url_with_browser(url),
                     base_url=self._base_url,
                     property_type=property_type,
                 )
@@ -138,7 +140,7 @@ class RealtClient:
             )
             try:
                 return parse_realt_search_page(
-                    self.fetch_url_with_browser(url),
+                    await self.fetch_url_with_browser(url),
                     base_url=self._base_url,
                     property_type=property_type,
                 )
@@ -146,7 +148,7 @@ class RealtClient:
                 raise RealtNetworkError(f"Realt request failed: {url}") from error
         return result
 
-    def fetch_url(self, url: str) -> str:
+    async def fetch_url(self, url: str) -> str:
         """Fetch an absolute or site-relative URL and return response text."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
@@ -161,7 +163,7 @@ class RealtClient:
                 self._timeout_seconds,
             )
             try:
-                response = self._client.get(url)
+                response = await self._client.get(url)
                 response.raise_for_status()
                 logger.debug(
                     "source_http_request_finished source=realt attempt=%s "
@@ -190,22 +192,22 @@ class RealtClient:
                     attempt < self._retries,
                 )
                 if attempt < self._retries:
-                    sleep(self._retry_delay_seconds)
+                    await asyncio.sleep(self._retry_delay_seconds)
                     continue
                 break
         if settings.browser_fetch_enabled:
             try:
-                return self.fetch_url_with_browser(url)
+                return await self.fetch_url_with_browser(url)
             except BrowserFetchError as browser_error:
                 last_error = browser_error
         raise RealtNetworkError(f"Realt request failed: {url}") from last_error
 
-    def fetch_url_with_browser(self, url: str) -> str:
+    async def fetch_url_with_browser(self, url: str) -> str:
         """Fetch a URL through the configured browser fallback."""
         if url.startswith("/"):
             url = f"{self._base_url}{url}"
         logger.info("source_browser_fetch_started source=realt url=%s", url)
-        return browser_fetcher.fetch_html(url)
+        return await asyncio.to_thread(browser_fetcher.fetch_html, url)
 
     def _url(self, path: str, _params: dict[str, str]) -> str:
         """Build an absolute URL for a Realt path."""
