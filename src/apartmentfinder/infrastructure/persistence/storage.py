@@ -253,13 +253,27 @@ class BotStorage:
         limit: int = 50,
     ) -> None:
         """Store recent matching listing snapshots for old-listing browsing."""
-        if not listings:
-            return
         saved_at = datetime.now(UTC)
         unique_listings = {
             (listing.source, int(listing.ad_id)): listing for listing in listings
         }
         with self._session_factory() as session:
+            if unique_listings:
+                session.execute(
+                    delete(ListingHistoryRow).where(
+                        ListingHistoryRow.subscription_id == subscription_id,
+                        tuple_(
+                            ListingHistoryRow.source,
+                            ListingHistoryRow.ad_id,
+                        ).not_in(unique_listings),
+                    )
+                )
+            else:
+                session.execute(
+                    delete(ListingHistoryRow).where(
+                        ListingHistoryRow.subscription_id == subscription_id,
+                    )
+                )
             for (source, ad_id), listing in unique_listings.items():
                 row = session.scalar(
                     select(ListingHistoryRow).where(

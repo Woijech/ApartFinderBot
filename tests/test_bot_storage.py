@@ -120,3 +120,32 @@ def test_bot_storage_orders_history_by_listing_publication_time() -> None:
 
     assert storage.history_listing_for_subscription(subscription.id, 0) == new_listing
     assert storage.history_listing_for_subscription(subscription.id, 1) == old_listing
+
+
+def test_bot_storage_replaces_listing_history_snapshot() -> None:
+    storage = make_storage()
+    subscription = storage.create_subscription(123, "Комната", SearchRequest())
+    old_listing = Listing(
+        ad_id=1,
+        title="Старое",
+        url="https://example.test/1",
+        published_at=datetime(2026, 5, 20, 12, 0, tzinfo=UTC),
+    )
+    current_listing = Listing(
+        ad_id=2,
+        title="Актуальное",
+        url="https://example.test/2",
+        published_at=datetime(2026, 6, 7, 12, 0, tzinfo=UTC),
+    )
+
+    storage.save_listing_history_for_subscription(
+        subscription.id,
+        [old_listing, current_listing],
+    )
+    storage.save_listing_history_for_subscription(subscription.id, [current_listing])
+
+    assert storage.listing_history_count_for_subscription(subscription.id) == 1
+    assert (
+        storage.history_listing_for_subscription(subscription.id, 0)
+        == current_listing
+    )

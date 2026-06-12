@@ -400,7 +400,7 @@ def test_enable_subscription_watch_does_not_save_current_listings_to_history(
     assert saved_history == []
 
 
-def test_notify_profile_saves_only_unnotified_new_listings_to_history(
+def test_notify_profile_saves_latest_matching_listings_to_history(
     monkeypatch,
     caplog,
 ) -> None:
@@ -479,7 +479,81 @@ def test_notify_profile_saves_only_unnotified_new_listings_to_history(
     assert "listing_notification_sent chat_id=123 subscription_id=1" in caplog.text
     assert "source=kufar ad_id=2" in caplog.text
     assert "source=kufar ad_id=1" in caplog.text
-    assert [[listing.ad_id for listing in items] for items in saved_history] == [[3, 4]]
+    assert [[listing.ad_id for listing in items] for items in saved_history] == [
+        [1, 2, 3, 4]
+    ]
+    assert marked_seen == [listings]
+
+
+def test_notify_profile_refreshes_history_when_no_new_listings(
+    monkeypatch,
+) -> None:
+    started_at = datetime(2026, 5, 7, 12, 0, tzinfo=UTC)
+    listings = [
+        Listing(
+            ad_id=ad_id,
+            title=f"Текущее {ad_id}",
+            url=f"https://example.test/{ad_id}",
+            published_at=datetime(2026, 5, 7, 12, ad_id, tzinfo=UTC),
+        )
+        for ad_id in range(1, 4)
+    ]
+    saved_history: list[list[Listing]] = []
+    marked_seen: list[list[Listing]] = []
+
+    async def fake_run_profile_check(
+        profile: UserProfile,
+        operation,
+        *,
+        skip_if_running: bool = False,
+    ) -> list[Listing]:
+        return await operation()
+
+    async def fake_fetch_listings(profile: UserProfile) -> list[Listing]:
+        return listings
+
+    async def fake_fetch_listing_details(items: list[Listing]) -> list[Listing]:
+        return items
+
+    fake_storage = SimpleNamespace(
+        is_seller_banned=lambda chat_id, source, seller_name: False,
+    )
+    monkeypatch.setattr(telegram_bot, "storage", fake_storage)
+    monkeypatch.setattr(
+        telegram_bot,
+        "settings",
+        SimpleNamespace(bot_max_notifications_per_check=2),
+    )
+    monkeypatch.setattr(telegram_bot, "run_profile_check", fake_run_profile_check)
+    monkeypatch.setattr(telegram_bot, "fetch_listings", fake_fetch_listings)
+    monkeypatch.setattr(
+        telegram_bot,
+        "fetch_listing_details",
+        fake_fetch_listing_details,
+    )
+    monkeypatch.setattr(
+        telegram_bot,
+        "unseen_items_for_subscription",
+        lambda profile, keys: [],
+    )
+    monkeypatch.setattr(
+        telegram_bot,
+        "save_matching_listing_history",
+        lambda profile, items: saved_history.append(items),
+    )
+    monkeypatch.setattr(
+        telegram_bot,
+        "mark_subscription_seen",
+        lambda profile, items: marked_seen.append(items),
+    )
+
+    profile = UserProfile(chat_id=123, id=1, watch_started_at=started_at)
+
+    asyncio.run(notify_profile(object(), profile))
+
+    assert [[listing.ad_id for listing in items] for items in saved_history] == [
+        [1, 2, 3]
+    ]
     assert marked_seen == [listings]
 
 

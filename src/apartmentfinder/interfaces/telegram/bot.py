@@ -894,6 +894,8 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
         len(new_listings),
         settings.bot_max_notifications_per_check,
     )
+    history_listings = await fetch_listing_details(fresh_listings[:50])
+    save_matching_listing_history(profile, history_listings)
     if not new_listings:
         mark_subscription_seen(profile, listings)
         logger.info(
@@ -909,9 +911,6 @@ async def notify_profile(bot: Bot, profile: UserProfile) -> None:
 
     notification_limit = max(0, settings.bot_max_notifications_per_check)
     listings_to_send = new_listings[:notification_limit]
-    listings_not_sent = new_listings[notification_limit:]
-    history_listings = await fetch_listing_details(listings_not_sent[:50])
-    save_matching_listing_history(profile, history_listings)
     logger.info(
         "listing_notifications_planned chat_id=%s subscription_id=%s new=%s "
         "to_send=%s",
